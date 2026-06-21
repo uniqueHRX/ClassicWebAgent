@@ -1,0 +1,6 @@
+.agent/
+.tmp/
+.vscode/
+__pycache__/
+
+.env

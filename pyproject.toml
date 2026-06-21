@@ -1,0 +1,26 @@
+[project]
+name = "ClassicWebAgent"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Huang Runxuan",email = "uniquehrx@outlook.com"},
+    {name = "Shen Jiale",email = "shenjiale@example.com"}
+]
+requires-python = ">=3.11"
+dependencies = [
+    "openai (>=2.41.0,<3.0.0)",
+    "requests (>=2.34.2,<3.0.0)",
+    "pillow (>=12.2.0,<13.0.0)",
+    "python-dotenv (>=1.2.2,<2.0.0)",
+    "playwright (>=1.60.0,<2.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "classic_web_agent", from = "src"}]
+
+[tool.poetry.scripts]
+classic-web-agent = "classic_web_agent.main:main"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
