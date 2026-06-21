@@ -197,7 +197,7 @@ graph TD
 | [`agent/verifier.py`](../src/classic_web_agent/agent/verifier.py) | 状态比对 + 失败判断 + 自愈恢复（回退/重试/替代） | 二 |
 | [`agent/perception.py`](../src/classic_web_agent/agent/perception.py) | VLM 截图分析 + CDP 增强 DOM 解析 + 元素定位；CDP 采集/解析 + Playwright 执行，详见 [感知模块设计](perception-design.md) | 一/二 |
 | [`browser.py`](../src/classic_web_agent/browser.py) | Playwright 管理 + 原子操作（click/type/scroll/screenshot/js_eval）；截图使用 PIL optimize PNG 编码为 data URI | 一 |
-| [`llm.py`](../src/classic_web_agent/llm.py) | OpenAI 兼容 API，LLM/VLM 双模式，统一重试/超时；VLM 图片输入统一使用 PIL optimize PNG 编码 | 一 |
+| [`llm.py`](../src/classic_web_agent/llm.py) | OpenAI 兼容 API，LLM/VLM 双模式，统一重试/超时；图片编码由调用方（`browser.py`）处理，本模块不做编码 | 一 |
 | [`logger.py`](../src/classic_web_agent/logger.py) | 结构化日志 + JSONL 轨迹记录 + 分步截图保存 | 一 |
 | [`skills.py`](../src/classic_web_agent/skills.py) | Skill 注册 + 按需加载 | 二 |
 | [`scripts/run.py`](../scripts/run.py) | 开发辅助：自动加载 `.env`，调用 `main()` | 一 |
