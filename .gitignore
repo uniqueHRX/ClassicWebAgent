@@ -2,5 +2,6 @@
 .tmp/
 .vscode/
 __pycache__/
+plans/
 
 .env
