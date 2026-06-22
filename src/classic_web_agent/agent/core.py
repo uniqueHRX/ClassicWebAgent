@@ -71,8 +71,13 @@ class Agent:
         """
         # 防御：子模块未注入时使用默认值
         memory = self.memory or Memory()
+        action_space = self.action_space or ActionSpace()
         planner = self.planner or Planner(memory=memory)
-        executor = self.executor or Executor(ActionSpace())
+        executor = self.executor or Executor(
+            action_space=action_space,
+            browser=None,
+            memory=memory,
+        )
         verifier = self.verifier or Verifier()
         perception = self.perception or Perception(vlm=None, browser=None)
 
@@ -100,7 +105,7 @@ class Agent:
                 # b. 规划
                 action = planner.plan(state)
 
-                # c. 执行
+                # c. 执行（统一入口：内部+外部动作均由 Executor 处理）
                 action_result = executor.execute(action)
 
                 # d. 验证
@@ -116,7 +121,7 @@ class Agent:
                 )
                 self.logger.log_step(step)
 
-                # f. 终止条件：DONE 或 FAIL
+                # f. 终止条件：DONE 或 FAIL（由 Executor 返回成功，Agent 控制循环）
                 if action.action_type in ("DONE", "FAIL"):
                     break
 

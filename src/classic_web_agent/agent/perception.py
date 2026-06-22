@@ -473,10 +473,24 @@ class Perception:
         )
         tree_text = _serialize(root)
 
+        # ── 标签页信息 ──
+        try:
+            tab_id = f"tab_{self.browser.active_index}"
+            tabs_lines: list[str] = []
+            for i, p in enumerate(self.browser.all_pages):
+                marker = " ← 当前" if i == self.browser.active_index else ""
+                tabs_lines.append(f"  tab_{i}: {p.url} - {p.title()}{marker}")
+            tabs_list = "\n".join(tabs_lines)
+        except Exception:
+            tab_id = ""
+            tabs_list = ""
+
         # ── 步骤 5: 组装 PageState ──
         return PageState(
             screenshot=screenshot,
             url=page.url,
             title=page.title(),
             tree_text=tree_text,
+            current_tab_id=tab_id,
+            tabs_list=tabs_list,
         )

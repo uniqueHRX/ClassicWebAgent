@@ -15,9 +15,11 @@ _log_handler: logging.Handler | None = None
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """将 logger 输出重定向到 log/Tests.tmp。
-    
-    Session 结束时 prepend 到 log/Tests.log，实现"每次运行插入文件顶端"。
+    """pytest 全局配置。
+
+    - verbose 但不捕获 stdout（VSCode 测试面板兼容）
+    - 注册自定义 markers
+    - 将 logger 输出重定向到 log/Tests.tmp
     """
     global _log_handler
 
@@ -26,6 +28,9 @@ def pytest_configure(config: pytest.Config) -> None:
     config.option.capture = "no"
     # 关闭 pytest 自身的 CLI 日志输出
     config.option.log_cli = False
+
+    # 注册自定义 markers
+    config.addinivalue_line("markers", "integration: 需要真实浏览器/API 的集成测试")
 
     # 日志目录
     log_dir = Path("log")

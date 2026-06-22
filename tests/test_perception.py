@@ -31,7 +31,7 @@ class TestPerceptionBasics:
     """Perception 基础功能测试。"""
 
     def test_perception_no_browser(self):
-        """浏览器未启动时 observe() 应返回空 PageState。"""
+        """浏览器未启动时 observe() 应返回空 PageState（含新字段）。"""
         perception = Perception(vlm=None, browser=None)
         state = perception.observe()
         assert isinstance(state, PageState)
@@ -39,6 +39,8 @@ class TestPerceptionBasics:
         assert state.url == ""
         assert state.title == ""
         assert state.tree_text == ""
+        assert state.current_tab_id == ""
+        assert state.tabs_list == ""
         logger.info("空 PageState 验证通过 ✓")
 
 
@@ -298,6 +300,12 @@ class TestPerceptionIntegration:
 
         # ── 验证 PageState 完整性 ──
         assert state.url, "URL 不应为空"
+        assert state.current_tab_id, "current_tab_id 不应为空"
+        assert state.tabs_list, "tabs_list 不应为空"
+        assert state.current_tab_id in state.tabs_list, (
+            f"tabs_list 不包含当前标签页标识 '{state.current_tab_id}':\n"
+            f"{state.tabs_list}"
+        )
         expected_host = urlparse(url).hostname or ""
         if expected_host:
             assert expected_host in state.url.lower(), (
@@ -333,3 +341,30 @@ class TestPerceptionIntegration:
         logger.info("[%s] %s → log/%s (%d 字符, %d 交互元素)",
                      label, state.url, output_path.name,
                      len(state.tree_text), state.tree_text.count("["))
+
+    def test_tabs_list_multiple_tabs(self) -> None:
+        """打开多个标签页后 tabs_list 应包含所有标签页信息。"""
+        from classic_web_agent.browser import Browser
+
+        with Browser(headless=False) as browser:
+            perception = Perception(vlm=None, browser=browser)
+
+            # 默认第一个标签页
+            state = perception.observe()
+            assert state.current_tab_id == "tab_0", (
+                f"第一个标签页应为 tab_0，收到 '{state.current_tab_id}'"
+            )
+            assert state.tabs_list.count("tab_") == 1
+            logger.info("初始标签页: %s", state.current_tab_id)
+
+            # 打开新标签页
+            browser.new_tab("https://example.com")
+            state = perception.observe()
+            assert state.current_tab_id == "tab_1", (
+                f"新标签页应为 tab_1，收到 '{state.current_tab_id}'"
+            )
+            assert state.tabs_list.count("tab_") == 2
+            assert "← 当前" in state.tabs_list, (
+                "tabs_list 应标记当前标签页:\n" + state.tabs_list
+            )
+            logger.info("双标签页 tabs_list:\n%s", state.tabs_list)

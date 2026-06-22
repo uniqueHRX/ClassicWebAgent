@@ -40,11 +40,13 @@ def create_agent(config: dict[str, Any]) -> Agent:
     memory = Memory()
     action_space = ActionSpace()
 
-    # 阶段一：不创建真实的 LLMClient 和 Browser
-    # 传入 None，子模块的 stub 实现不依赖它们
     perception = Perception(vlm=None, browser=None)
-    planner = Planner(memory=memory, llm=None)
-    executor = Executor(action_space=action_space, browser=None)
+    planner = Planner(vlm=None, memory=memory)
+    executor = Executor(
+        action_space=action_space,
+        browser=None,
+        memory=memory,
+    )
     verifier = Verifier()
 
     agent = Agent(config)

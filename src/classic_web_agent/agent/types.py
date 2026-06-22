@@ -15,6 +15,8 @@ class PageState:
     url: str = ""               # 当前页面 URL
     title: str = ""             # 页面标题
     tree_text: str = ""         # 可交互元素树文本（含 backendNodeId）
+    current_tab_id: str = ""    # 当前标签页标识（如 "tab_0"）
+    tabs_list: str = ""         # 所有标签页的文本描述
 
 
 @dataclass
@@ -49,10 +51,22 @@ class Action:
 
 @dataclass
 class ActionResult:
-    """动作执行结果。"""
+    """动作执行结果。
+
+    Fields:
+        success: 执行是否成功。
+        message: 状态描述信息。
+        data: 结果负载数据，按动作类型约定：
+            - SCREENSHOT → str (data URI)
+            - EXTRACT → str (提取的文本)
+            - FIND → dict (匹配结果，含 found/selector 键)
+            - NEW_TAB → int (新标签页索引)
+            - 其他动作 → None
+    """
 
     success: bool = True
     message: str = ""
+    data: Any = None
 
 
 @dataclass
@@ -62,6 +76,28 @@ class MemoryEntry:
     role: str = ""          # "user" / "assistant" / "system" / "observation"
     content: str = ""
     metadata: dict[str, Any] | None = None
+
+
+@dataclass
+class KnowledgeItem:
+    """一条结构化的知识条目。
+
+    LLM 在收到 VLM 的 observations 后加工存入 knowledge，
+    用于最终汇总报告生成。
+
+    Fields:
+        category: 类别（如 "论文摘要"、"价格信息"、"评价"）。
+        key: 标识（如 "论文A"、"京东_价格"）。
+        value: 值（自然语言文本）。
+        source_url: 来源页面 URL。
+        sub_task_id: 所属子任务 ID。
+    """
+
+    category: str = ""
+    key: str = ""
+    value: str = ""
+    source_url: str = ""
+    sub_task_id: int = 0
 
 
 @dataclass
