@@ -8,7 +8,7 @@
 
 from typing import Any
 
-from classic_web_agent.agent.types import Action, ActionResult, PageState
+from classic_web_agent.common.types import Action, ActionResult, PageState
 
 
 class Verifier:

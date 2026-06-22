@@ -10,10 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from classic_web_agent.agent.action import ActionType
-from classic_web_agent.agent.planner import Planner
-from classic_web_agent.agent.memory import Memory
-from classic_web_agent.agent.types import Action, PageState
+from classic_web_agent.common.action import ActionType
+from classic_web_agent.subagent.planner import Planner
+from classic_web_agent.common.memory import Memory
+from classic_web_agent.common.types import Action, PageState
 from classic_web_agent.llm import LLMClient
 
 logger = logging.getLogger(__name__)

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from classic_web_agent.agent.perception import (
+from classic_web_agent.subagent.perception import (
     Perception,
     EnhancedDOMNode,
     Bounds,
@@ -22,7 +22,7 @@ from classic_web_agent.agent.perception import (
     _is_interactive,
     _serialize,
 )
-from classic_web_agent.agent.types import PageState
+from classic_web_agent.common.types import PageState
 
 logger = logging.getLogger(__name__)
 

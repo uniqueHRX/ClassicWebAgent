@@ -18,7 +18,7 @@ observe → plan → execute → verify
 
 from typing import Any
 
-from classic_web_agent.agent.types import (
+from classic_web_agent.common.types import (
     Action,
     ActionResult,
     AgentStep,
@@ -29,12 +29,12 @@ from classic_web_agent.agent.types import (
     TaskResult,
 )
 from classic_web_agent.logger import Logger
-from classic_web_agent.agent.memory import Memory
-from classic_web_agent.agent.action import ActionSpace
-from classic_web_agent.agent.perception import Perception
-from classic_web_agent.agent.planner import Planner
-from classic_web_agent.agent.executor import Executor
-from classic_web_agent.agent.verifier import Verifier
+from classic_web_agent.common.memory import Memory
+from classic_web_agent.common.action import ActionSpace
+from classic_web_agent.subagent.perception import Perception
+from classic_web_agent.subagent.planner import Planner as SubPlanner
+from classic_web_agent.subagent.executor import Executor
+from classic_web_agent.subagent.verifier import Verifier
 
 # 最大步数，防止死循环
 MAX_STEPS = 50

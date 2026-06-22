@@ -4,8 +4,8 @@ import logging
 
 from classic_web_agent.main import create_agent
 from classic_web_agent.agent.core import Agent
-from classic_web_agent.agent.action import ActionType
-from classic_web_agent.agent.types import (
+from classic_web_agent.common.action import ActionType
+from classic_web_agent.common.types import (
     PageState,
     Action,
     ActionResult,
@@ -110,7 +110,7 @@ class TestAgentFramework:
 
     def test_memory_working(self):
         """Memory 的工作记忆应正确存取。"""
-        from classic_web_agent.agent.memory import Memory
+        from classic_web_agent.common.memory import Memory
 
         mem = Memory()
         mem.add_working(MemoryEntry(role="user", content="你好"))
@@ -121,7 +121,7 @@ class TestAgentFramework:
 
     def test_action_space_validate(self):
         """ActionSpace.validate 阶段一应放行所有动作。"""
-        from classic_web_agent.agent.action import ActionSpace
+        from classic_web_agent.common.action import ActionSpace
 
         space = ActionSpace()
         action = Action(action_type="CLICK")

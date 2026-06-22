@@ -11,14 +11,14 @@ from typing import Any
 
 import yaml
 
-from classic_web_agent.agent.action import ActionType
-from classic_web_agent.agent.memory import Memory
-from classic_web_agent.agent.types import Action, PageState
+from classic_web_agent.common.action import ActionType
+from classic_web_agent.common.memory import Memory
+from classic_web_agent.common.types import Action, PageState
 from classic_web_agent.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PATH = Path("config/prompts/planner.yaml")
+_PROMPT_PATH = Path(__file__).parent / "prompts" / "planner.yaml"
 
 # VLM 返回中必须存在的字段
 _REQUIRED_FIELDS = frozenset({

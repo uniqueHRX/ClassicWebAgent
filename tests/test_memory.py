@@ -2,8 +2,8 @@
 
 import logging
 
-from classic_web_agent.agent.memory import Memory
-from classic_web_agent.agent.types import KnowledgeItem, MemoryEntry
+from classic_web_agent.common.memory import Memory
+from classic_web_agent.common.types import KnowledgeItem, MemoryEntry
 
 logger = logging.getLogger(__name__)
 

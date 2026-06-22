@@ -11,7 +11,7 @@ from typing import Any
 
 from classic_web_agent.llm import LLMClient
 from classic_web_agent.browser import Browser
-from classic_web_agent.agent.types import PageState
+from classic_web_agent.common.types import PageState
 
 
 # ── 内部数据结构 ──────────────────────────────────────────────────────────────

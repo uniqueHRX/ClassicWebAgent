@@ -14,9 +14,9 @@
 import logging
 from typing import Any
 
-from classic_web_agent.agent.action import ActionSpace
-from classic_web_agent.agent.memory import Memory
-from classic_web_agent.agent.types import Action, ActionResult, MemoryEntry
+from classic_web_agent.common.action import ActionSpace
+from classic_web_agent.common.memory import Memory
+from classic_web_agent.common.types import Action, ActionResult, MemoryEntry
 from classic_web_agent.browser import Browser, BrowserError
 
 logger = logging.getLogger(__name__)
