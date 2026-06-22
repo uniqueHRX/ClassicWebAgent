@@ -1,66 +1,86 @@
-"""VLM 子代理核心 —— 子任务自治执行循环。
+"""VLM 子代理核心 —— 唯一公开接口 SubAgent。
 
-接收 LLM 派发的子任务，独立完成页面操作并返回 observations。
+用法:
+    from classic_web_agent.subagent import SubAgent
 
-流程：
-  1. 清空 observations
-  2. Perception.observe() → PageState
-  3. Planner.plan() → Action 列表
-  4. Executor.execute() → 逐个执行
-  5. 循环直到 DONE / FAIL / 超步数
-  6. 返回 observations 给 LLM
+    sub = SubAgent(vlm=vlm_client, browser=browser, memory=memory)
+    observations = sub.execute(sub_task="搜索论文A的摘要")
+    print(observations)
 """
 
 import logging
 from typing import Any
 
+from classic_web_agent.common.action import ActionSpace
 from classic_web_agent.common.memory import Memory
 from classic_web_agent.common.types import Action, MemoryEntry, PageState
 from classic_web_agent.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 
-# VLM 子任务最大步数
 _MAX_SUB_STEPS = 50
 
 
 class SubAgent:
-    """VLM 子代理 —— 自治执行单个子任务。"""
+    """VLM 子代理 —— 自治执行单个子任务。
+
+    对外唯一接口：execute(sub_task) → observations。
+    内部自动创建 Perception / Planner / Executor。
+    """
 
     def __init__(
         self,
-        perception: Any,   # Perception 实例
-        planner: Any,      # subagent.planner.Planner 实例
-        executor: Any,     # subagent.executor.Executor 实例
-        memory: Memory,
+        vlm: LLMClient | None = None,
+        browser: Any | None = None,
+        memory: Memory | None = None,
     ) -> None:
-        self.perception = perception
-        self.planner = planner
-        self.executor = executor
-        self.memory = memory
-
-    def execute(self, sub_task: str) -> str:
-        """执行单个子任务，返回 observations 字符串。
+        """初始化子代理。
 
         Args:
-            sub_task: LLM 分解的子任务描述。
+            vlm: VLM 客户端（视觉模型）。
+            browser: 浏览器驱动。
+            memory: 共享记忆（必须传入，由 Agent 创建后注入）。
+        """
+        self.vlm = vlm
+        self.browser = browser
+        self.memory = memory or Memory()
+
+        # 内部组件（懒加载）
+        self._planner: Any = None
+        self._perception: Any = None
+        self._executor: Any = None
+
+    # ── 唯一公开方法 ─────────────────────────────────────────────
+
+    def run(self, sub_task: str) -> str:
+        """执行单个子任务。
+
+        输入子任务描述 → 内部 ReAct 循环 → 输出 observations。
+
+        Args:
+            sub_task: LLM 分解的子任务描述（自然语言）。
 
         Returns:
-            observations（VLM 每步 memory 字段的拼接）。
+            observations 字符串（VLM 每步 memory 字段的拼接）。
         """
-        # 清空当前子任务的 observation 和 working
+        # 清空上一个子任务的记录
         self.memory.clear_observations()
         self.memory.clear_working()
 
+        # 初始化内部组件
+        perception = self._get_perception()
+        planner = self._get_planner()
+        executor = self._get_executor()
+
         for step in range(1, _MAX_SUB_STEPS + 1):
-            # 1. 观察页面
-            state = self.perception.observe()
+            # 1. 观察
+            state = perception.observe()
             if not state.url:
                 logger.warning("页面状态为空，跳过此步")
                 continue
 
             # 2. VLM 决策
-            actions = self.planner.plan(
+            actions = planner.plan(
                 state=state,
                 sub_task=sub_task,
                 last_result=self._last_result_text(),
@@ -75,13 +95,16 @@ class SubAgent:
             # 3. 执行动作序列
             for action in actions:
                 if action.action_type in ("DONE", "FAIL"):
+                    summary = action.text or ""
+                    if summary:
+                        self.memory.add_observation(summary)
                     if action.action_type == "DONE":
-                        logger.info("[子任务完成] %s", action.text or "")
+                        logger.info("[子任务完成] %s", summary)
                     else:
-                        logger.warning("[子任务失败] %s", action.text or "")
+                        logger.warning("[子任务失败] %s", summary)
                     return self.memory.get_observations()
 
-                result = self.executor.execute(action)
+                result = executor.execute(action)
                 self.memory.add_working(
                     MemoryEntry(
                         role="assistant",
@@ -95,9 +118,34 @@ class SubAgent:
 
         return self.memory.get_observations()
 
+    # ── 内部组件管理 ────────────────────────────────────────────
+
+    def _get_perception(self) -> Any:
+        if self._perception is None:
+            from classic_web_agent.subagent.perception import Perception
+            self._perception = Perception(vlm=self.vlm, browser=self.browser)
+        return self._perception
+
+    def _get_planner(self) -> Any:
+        if self._planner is None:
+            from classic_web_agent.subagent.planner import Planner
+            self._planner = Planner(vlm=self.vlm, memory=self.memory)
+        return self._planner
+
+    def _get_executor(self) -> Any:
+        if self._executor is None:
+            from classic_web_agent.subagent.executor import Executor
+            self._executor = Executor(
+                action_space=ActionSpace(),
+                browser=self.browser,
+                memory=self.memory,
+            )
+        return self._executor
+
+    # ── 辅助 ────────────────────────────────────────────────────
+
     def _last_result_text(self) -> str:
-        """格式化上一步结果。"""
         recent = self.memory.get_working(limit=1)
         if recent:
-            return f"{recent[-1].content}"
+            return recent[-1].content
         return ""
