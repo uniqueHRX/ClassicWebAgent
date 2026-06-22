@@ -7,6 +7,9 @@ from classic_web_agent.agent.types import (
     ActionResult,
     MemoryEntry,
     AgentStep,
+    PlanStep,
+    Plan,
+    TaskResult,
 )
 
 __all__ = [
@@ -16,4 +19,7 @@ __all__ = [
     "ActionResult",
     "MemoryEntry",
     "AgentStep",
+    "PlanStep",
+    "Plan",
+    "TaskResult",
 ]
