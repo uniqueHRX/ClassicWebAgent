@@ -116,19 +116,7 @@ PAGE_TAB_B = """<!DOCTYPE html>
 """
 
 
-# ── Fixtures ────────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def browser() -> Browser:
-    """创建有头浏览器实例。"""
-    b = Browser(headless=False)
-    b.launch()
-    yield b
-    b.close()
-
-
-# ── 测试方法 ────────────────────────────────────────────────────────────
+# ── 测试方法（browser fixture 来自 tests/conftest.py）───
 
 
 class TestBrowserNavigation:

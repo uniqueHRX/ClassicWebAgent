@@ -1,50 +1,20 @@
-"""LLMClient 测试 —— 单元测试（mock）+ 集成测试（真实 API，需配置 .env 文件）。
+"""LLMClient 测试 —— 单元测试（mock）+ 集成测试（真实 API）。
 
 ---
 【调用方法】
 ---
 
-(一) pytest 运行（推荐开发验证，mock 测试无需 API key）
-
-  # 全部单元测试
+  # 单元测试（无需 API key）
   poetry run python -m pytest tests/test_llm.py -v
 
   # 按类别筛选
-  poetry run python -m pytest tests/test_llm.py -v -k "Init"      # 构造测试
-  poetry run python -m pytest tests/test_llm.py -v -k "Chat"      # 调用测试
-  poetry run python -m pytest tests/test_llm.py -v -k "Retry"     # 重试测试
+  poetry run python -m pytest tests/test_llm.py -v -k "Init or Chat or Retry"
 
-  # 集成测试（需 .env 中配置 LLM_* / VLM_* 环境变量）
+  # 集成测试（需 .env.test 中配置 LLM_* / VLM_*）
   poetry run python -m pytest tests/test_llm.py -v -m integration
 
   # 跳过集成测试（只跑 mock）
   poetry run python -m pytest tests/test_llm.py -v -k "not integration"
-
-
-(二) CLI 子命令（需 .env 配置 API 凭证）
-
-  # LLM 文本测试
-  python tests/test_llm.py llm "用一句话介绍你自己"
-
-  # LLM JSON 结构化输出测试
-  python tests/test_llm.py json "输出 JSON 格式的待办事项，包含3项"
-
-  # VLM 视觉测试（prompt + 图片路径）
-  python tests/test_llm.py vlm "描述这张图片中的内容" screenshot.png
-
-  # 可选 --max-tokens（默认 10000）
-  python tests/test_llm.py --max-tokens 500 llm "简短回复"
-
-  输出格式：
-  ----
-    LLM 文本测试 / LLM JSON 结构化输出测试 / VLM 视觉测试
-  ----
-    推理过程:          ← reasoning_content（仅 reasoning 模型有）
-    <模型推理过程>
-    ----
-    回复内容:
-    <模型最终回复>
-  ----
 
 
 【测试结构】
@@ -54,8 +24,7 @@
 | TestLLMClientInit | 单元 | 8 | 构造参数、环境变量、配置校验 |
 | TestLLMClientChat | 单元 | 6 | ChatResponse 返回值、消息传递 |
 | TestLLMClientRetry | 单元 | 4 | RateLimit/Timeout/APIError 重试 |
-| TestLLMClientIntegration | 集成 | 3 | 真实 API（需 .env，默认跳过） |
-| CLI 子命令 | 脚本 | 3 | llm / json / vlm |
+| TestLLMClientIntegration | 集成 | 2 | 真实 LLM+VLM（需 .env.test 配置，默认跳过） |
 ---
 """
 
@@ -65,10 +34,14 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import logging
 from dotenv import load_dotenv
 from openai import APIError, APITimeoutError, RateLimitError
 
 from classic_web_agent.llm import LLMClient, LLMConfigError, ChatResponse
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ── Fixtures ────────────────────────────────────────────────────────────
 
@@ -121,8 +94,12 @@ class TestLLMClientInit:
         assert client.base_url == "https://override.com/v1"
         assert client.model_name == "override-model"
 
-    def test_missing_api_key_raises_error(self) -> None:
-        """缺少 API_KEY 时抛出 LLMConfigError。"""
+    def test_missing_api_key_raises_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """缺少 API_KEY 时抛出 LLMConfigError（需清除环境变量）。"""
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.delenv("VLM_API_KEY", raising=False)
         with pytest.raises(LLMConfigError, match="LLM_API_KEY"):
             LLMClient(
                 mode="llm",
@@ -131,8 +108,12 @@ class TestLLMClientInit:
                 model_name="test",
             )
 
-    def test_missing_base_url_raises_error(self) -> None:
-        """缺少 BASE_URL 时抛出 LLMConfigError。"""
+    def test_missing_base_url_raises_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """缺少 BASE_URL 时抛出 LLMConfigError（需清除环境变量）。"""
+        monkeypatch.delenv("LLM_BASE_URL", raising=False)
+        monkeypatch.delenv("VLM_BASE_URL", raising=False)
         with pytest.raises(LLMConfigError, match="LLM_BASE_URL"):
             LLMClient(
                 mode="llm",
@@ -141,8 +122,12 @@ class TestLLMClientInit:
                 model_name="test",
             )
 
-    def test_missing_model_name_raises_error(self) -> None:
-        """缺少 MODEL_NAME 时抛出 LLMConfigError。"""
+    def test_missing_model_name_raises_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """缺少 MODEL_NAME 时抛出 LLMConfigError（需清除环境变量）。"""
+        monkeypatch.delenv("LLM_MODEL_NAME", raising=False)
+        monkeypatch.delenv("VLM_MODEL_NAME", raising=False)
         with pytest.raises(LLMConfigError, match="LLM_MODEL_NAME"):
             LLMClient(
                 mode="llm",
@@ -355,166 +340,59 @@ class TestLLMClientRetry:
 
 @pytest.mark.integration
 class TestLLMClientIntegration:
-    """集成测试 —— 需要真实 API 配置（环境变量），默认跳过。
+    """集成测试 —— 需要真实 API 配置（.env.test），默认跳过。
 
-    运行方式：
-        # 确保 .env 中配置了 LLM_* / VLM_* 环境变量
-        pytest tests/test_llm.py -v -m integration
+    包含 2 个测试：
+    - test_llm_chat: LLM 文本，prompt 来自 LLM_TEST_PROMPT
+    - test_vlm_chat: VLM 视觉（含图片），prompt/图片路径来自环境变量
     """
 
     @pytest.fixture(autouse=True)
     def load_env_and_check(self) -> None:
-        """先加载 .env 文件，再检查 API 密钥是否就绪。"""
-        load_dotenv()
+        """检查 LLM_API_KEY 是否就绪（.env.test 由 conftest 自动加载）。"""
         if not os.getenv("LLM_API_KEY"):
             pytest.skip("LLM_API_KEY 未设置，跳过 LLM 集成测试")
 
     def test_llm_chat(self) -> None:
-        """真实 LLM 调用 —— 简单对话。"""
+        """LLM 文本集成测试 —— prompt 来自环境变量 LLM_TEST_PROMPT。"""
+        prompt = os.getenv("LLM_TEST_PROMPT", "用一句话介绍你自己")
         client = LLMClient(mode="llm")
         resp = client.chat(
-            [{"role": "user", "content": "用三个字形容今天天气"}],
+            [{"role": "user", "content": prompt}],
             temperature=0.3,
-            max_tokens=20,
+            max_tokens=10000,
         )
+        logger.info("\n\n[LLM推理过程]\n%s", resp.reasoning or "(无)")
+        logger.info("\n\n[LLM响应内容]\n%s", resp.content)
         assert isinstance(resp, ChatResponse)
         assert len(resp.content) > 0
-        print(f"\n=== LLM 回复 ===")
-        print(f"推理: {resp.reasoning or '(无)'}")
-        print(f"回复: {resp.content}")
-
-    def test_llm_json_output(self) -> None:
-        """真实 LLM 调用 —— JSON 结构化输出。"""
-        client = LLMClient(mode="llm")
-        resp = client.chat(
-            [{"role": "user", "content": '输出 JSON：{"city": "北京", "weather": "晴天"}'}],
-            temperature=0.1,
-            max_tokens=100,
-            response_format={"type": "json_object"},
-        )
-        assert isinstance(resp, ChatResponse)
-        assert len(resp.content) > 0
-        print(f"\n=== LLM JSON ===")
-        print(f"推理: {resp.reasoning or '(无)'}")
-        print(f"回复: {resp.content}")
 
     def test_vlm_chat(self) -> None:
-        """真实 VLM 调用 —— 需要 VLM_API_KEY 配置。"""
-        load_dotenv()
+        """VLM 视觉集成测试 —— prompt + 图片路径来自环境变量。"""
         if not os.getenv("VLM_API_KEY"):
             pytest.skip("VLM_API_KEY 未设置，跳过 VLM 集成测试")
 
+        prompt = os.getenv("VLM_TEST_PROMPT", "请用中文描述这张图片的内容")
+        image_path = os.getenv("VLM_TEST_IMAGE", "")
+
+        if not image_path or not os.path.exists(image_path):
+            pytest.skip(f"VLM 测试图片不存在: {image_path}")
+
+        with open(image_path, "rb") as f:
+            img_data = f.read()
+        b64 = base64.b64encode(img_data).decode("utf-8")
+        data_uri = f"data:image/png;base64,{b64}"
+
         client = LLMClient(mode="vlm")
         resp = client.chat(
-            [{"role": "user", "content": "你好，请回复'ok'"}],
+            [{"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": data_uri}},
+            ]}],
             temperature=0.1,
-            max_tokens=10,
+            max_tokens=10000,
         )
+        logger.info("\n\n[VLM推理过程]\n%s", resp.reasoning or "(无)")
+        logger.info("\n\n[VLM响应内容]\n%s", resp.content)
         assert isinstance(resp, ChatResponse)
         assert len(resp.content) > 0
-        print(f"\n=== VLM 回复 ===")
-        print(f"推理: {resp.reasoning or '(无)'}")
-        print(f"回复: {resp.content}")
-
-
-# ── 命令行子命令入口 ────────────────────────────────────────────────────
-
-def _print_result(label: str, resp: ChatResponse) -> None:
-    """统一打印测试结果，包含 reasoning 和 content。"""
-    print(f"\n{'='*60}")
-    print(f"  {label}")
-    print(f"{'='*60}")
-    if resp.reasoning:
-        print(f"  推理过程:\n{resp.reasoning}")
-        print(f"  {'-'*40}")
-    print(f"  回复内容:\n{resp.content}")
-    print(f"{'='*60}")
-
-
-def _cmd_llm(args: Any) -> None:
-    """LLM 文本测试子命令。"""
-    load_dotenv()
-    client = LLMClient(mode="llm")
-    resp = client.chat(
-        [{"role": "user", "content": args.prompt}],
-        temperature=0.3,
-        max_tokens=args.max_tokens,
-    )
-    _print_result("LLM 文本测试", resp)
-
-
-def _cmd_json(args: Any) -> None:
-    """LLM JSON 结构化输出测试子命令。"""
-    load_dotenv()
-    client = LLMClient(mode="llm")
-    resp = client.chat(
-        [{"role": "user", "content": args.prompt}],
-        temperature=0.1,
-        max_tokens=args.max_tokens,
-        response_format={"type": "json_object"},
-    )
-    _print_result("LLM JSON 结构化输出测试", resp)
-
-
-def _cmd_vlm(args: Any) -> None:
-    """VLM 视觉测试子命令（prompt + 图片路径）。"""
-    load_dotenv()
-
-    # 读取图片并编码为 data URI
-    if not os.path.exists(args.image):
-        print(f"错误：图片文件不存在 {args.image}")
-        raise SystemExit(1)
-
-    with open(args.image, "rb") as f:
-        img_data = f.read()
-    b64 = base64.b64encode(img_data).decode("utf-8")
-    data_uri = f"data:image/png;base64,{b64}"
-
-    client = LLMClient(mode="vlm")
-    resp = client.chat(
-        [{"role": "user", "content": [
-            {"type": "text", "text": args.prompt},
-            {"type": "image_url", "image_url": {"url": data_uri}},
-        ]}],
-        temperature=0.1,
-        max_tokens=args.max_tokens,
-    )
-    _print_result("VLM 视觉测试", resp)
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="LLM/VLM 集成测试脚本 —— 单次执行一种测试模式",
-    )
-    parser.add_argument(
-        "--max-tokens", type=int, default=10000,
-        help="最大输出 token 数（默认 10000）",
-    )
-    sub = parser.add_subparsers(dest="command", required=True, title="测试模式")
-
-    # llm 子命令
-    p_llm = sub.add_parser("llm", help="LLM 文本测试")
-    p_llm.add_argument("prompt", type=str, help="发送给 LLM 的 prompt")
-    p_llm.set_defaults(func=_cmd_llm)
-
-    # json 子命令
-    p_json = sub.add_parser("json", help="LLM JSON 结构化输出测试")
-    p_json.add_argument("prompt", type=str, help="发送给 LLM 的 prompt（内容应为 JSON 相关）")
-    p_json.set_defaults(func=_cmd_json)
-
-    # vlm 子命令
-    p_vlm = sub.add_parser("vlm", help="VLM 视觉测试（含图片）")
-    p_vlm.add_argument("prompt", type=str, help="发送给 VLM 的文本 prompt")
-    p_vlm.add_argument("image", type=str, help="图片文件路径（PNG/JPG 等）")
-    p_vlm.set_defaults(func=_cmd_vlm)
-
-    args = parser.parse_args()
-
-    # 如果未提供子命令，显示帮助
-    if not hasattr(args, "func"):
-        parser.print_help()
-        raise SystemExit(1)
-
-    args.func(args)
