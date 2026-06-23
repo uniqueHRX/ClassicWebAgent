@@ -123,7 +123,7 @@ class Browser:
             1. 启动 Playwright 驱动进程
             2. launch Chromium（headless/s headless 取决于构造参数）
             3. 创建默认 BrowserContext
-            4. 创建默认 Page
+            4. 创建默认 Page 并注册 popup 事件监听
             5. 为 Page 创建 CDP session
 
         注意：launch 后立即可以调用 goto/click/screenshot 等方法。
@@ -137,6 +137,7 @@ class Browser:
         self._browser = self._pw.chromium.launch(headless=self.headless)
         self._context = self._browser.new_context()
         page = self._context.new_page()
+        self._register_popup_listener(page)
         self._pages = [page]
         self._active_index = 0
         self._create_cdp_session(page)
@@ -224,6 +225,37 @@ class Browser:
     def all_pages(self) -> list[PW_Page]:
         """所有打开的标签页列表（返回副本，外部修改不影响内部 _pages）。"""
         return list(self._pages)
+
+    # ── 新标签页监听（popup 事件）─────────────────────────────────────────
+
+    def _register_popup_listener(self, page: PW_Page) -> None:
+        """为页面注册 popup 事件监听，自动跟踪通过 CLICK 打开的新标签页。
+
+        Playwright 的 page.click() 在点击 target="_blank" 链接
+        或触发 window.open() 时，会在此 page 上触发 'popup' 事件。
+        监听此事件可以自动将新标签页纳入 _pages 管理。
+        """
+        page.on('popup', lambda popup: self._on_popup(popup))
+
+    def _on_popup(self, popup: PW_Page) -> None:
+        """新标签页被打开时的回调：注册 → 添加 → 切换。
+
+        1. 如果该页面尚未在 _pages 中，则添加并创建 CDP session
+        2. 自动切换到新标签页
+        3. 为新标签页也注册 popup 监听（链式打开）
+        """
+        if popup not in self._pages:
+            self._register_popup_listener(popup)
+            self._pages.append(popup)
+            try:
+                self._create_cdp_session(popup)
+            except Exception:
+                logger.warning("为新标签页创建 CDP session 失败", exc_info=True)
+        self._active_index = len(self._pages) - 1
+        logger.info(
+            "检测到新标签页，已自动切换至 tab_%d（共 %d 个标签页）",
+            self._active_index, len(self._pages),
+        )
 
     # ── CDP Session ─────────────────────────────────────────────────────
 
@@ -436,6 +468,7 @@ class Browser:
             url: 可选，在新标签页中打开的 URL。
         """
         page = self._context.new_page()  # type: ignore[union-attr]
+        self._register_popup_listener(page)
         self._create_cdp_session(page)
         self._pages.append(page)
         self._active_index = len(self._pages) - 1

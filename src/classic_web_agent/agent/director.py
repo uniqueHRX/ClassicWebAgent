@@ -16,6 +16,7 @@
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -79,11 +80,13 @@ class Director:
         # 构建 system prompt
         system = self._render_director_system()
 
-        # 构建 user message
+        # 构建 user message（注入当前日期时间）
+        now_str = datetime.now().strftime("%Y-%m-%d %A %H:%M")
         user = self._render_user_template(
             template_key="initial",
             prompt_data=self._director_prompt,
             task=task,
+            current_date=now_str,
         )
 
         # 调用 LLM（要求 JSON 输出）
@@ -138,9 +141,12 @@ class Director:
             )
 
         # 追加 SubAgent 结果作为新的 user message
+        now_str = datetime.now().strftime("%Y-%m-%d %A %H:%M")
         progress_template = self._director_prompt.get("user", {}).get("progress", "")
-        user = progress_template.replace("{completed_goal}", completed_goal).replace(
-            "{observations}", observations
+        user = (
+            progress_template.replace("{completed_goal}", completed_goal)
+            .replace("{observations}", observations)
+            .replace("{current_date}", now_str)
         )
         self._messages.append({"role": "user", "content": user})
 

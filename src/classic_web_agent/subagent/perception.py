@@ -270,6 +270,7 @@ def _build_enhanced_tree(
     dom_node: dict[str, Any],
     ax_lookup: dict[int, dict],
     snapshot_lookup: dict[int, dict],
+    parent_hidden: bool = False,
 ) -> EnhancedDOMNode:
     """递归构建增强 DOM 树。
 
@@ -284,6 +285,10 @@ def _build_enhanced_tree(
             "children": [...],
             ...
         }
+
+    Args:
+        parent_hidden: 父元素是否隐藏（CSS display:none / visibility:hidden 继承）。
+                       True 时该节点及其所有子树都被标记为隐藏，无需重复检测。
     """
     backend_id = dom_node.get("backendNodeId", 0)
     node_type = dom_node.get("nodeType", 0)
@@ -322,8 +327,11 @@ def _build_enhanced_tree(
     elif node_type == 3:  # TEXT_NODE
         enode.node_value = dom_node.get("nodeValue", "")
 
-    # 可见性判定
-    enode.is_hidden = _is_hidden(enode)
+    # 可见性判定：父元素隐藏 → 子元素必隐藏（CSS 继承）
+    if parent_hidden:
+        enode.is_hidden = True
+    else:
+        enode.is_hidden = _is_hidden(enode)
 
     # 可交互检测（仅对可见节点）
     if not enode.is_hidden:
@@ -333,10 +341,11 @@ def _build_enhanced_tree(
         disabled_val = enode.ax_properties.get("disabled", False)
         enode.is_disabled = bool(disabled_val)
 
-    # 递归处理子节点
+    # 递归处理子节点（传递父元素隐藏状态）
+    child_hidden = parent_hidden or enode.is_hidden
     for child in dom_node.get("children", []):
         enode.children.append(
-            _build_enhanced_tree(child, ax_lookup, snapshot_lookup)
+            _build_enhanced_tree(child, ax_lookup, snapshot_lookup, parent_hidden=child_hidden)
         )
 
     return enode

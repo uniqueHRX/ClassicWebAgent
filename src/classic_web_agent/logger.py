@@ -119,3 +119,69 @@ class Logger:
                 print(f"[Logger] DOM 树保存失败: {e}")
 
         return (png_path, txt_path)
+
+
+def fmt_action(action: Any) -> str:
+    """将 Action 对象格式化为紧凑字符串，用于日志输出。
+
+    格式示例：
+        GOTO(url=https://example.com)
+        CLICK(5)
+        TYPE(text="搜索词")
+        WAIT(networkidle)
+        DONE
+        SCROLL(direction=down)
+    """
+    # 兼容没有 action_type 的边界情况
+    atype = action.action_type.upper() if getattr(action, "action_type", None) else "?"
+
+    if atype == "GOTO" and action.extra:
+        url = action.extra.get("url", "")
+        return f"GOTO({url})"
+    if atype == "TYPE":
+        t = (action.text or "")[:20]
+        return f'TYPE(text="{t}")'
+    if atype == "CLICK" and action.element_id is not None:
+        return f"CLICK({action.element_id})"
+    if atype == "WAIT" and action.extra:
+        cond = action.extra.get("condition", "load")
+        return f"WAIT({cond})"
+    if atype == "PRESS" and action.extra:
+        key = action.extra.get("key", "")
+        return f"PRESS({key})"
+    if atype == "SCROLL" and action.extra:
+        d = action.extra.get("direction", "")
+        return f"SCROLL(direction={d})"
+    if atype == "SWITCH_TAB" and action.extra:
+        idx = action.extra.get("tab_index", "")
+        return f"SWITCH_TAB({idx})"
+    if atype == "NEW_TAB":
+        url = ""
+        if action.extra:
+            url = action.extra.get("url", "")
+        return f"NEW_TAB({url})" if url else "NEW_TAB()"
+    if atype == "MOUSE_CLICK" and action.extra:
+        x = action.extra.get("x", "?")
+        y = action.extra.get("y", "?")
+        return f"MOUSE_CLICK({x},{y})"
+    if atype == "EXTRACT" and action.extra:
+        eid = action.extra.get("element_id", "")
+        return f"EXTRACT(element={eid})" if eid else "EXTRACT()"
+    if atype == "FIND":
+        t = (action.text or "")[:20]
+        return f'FIND(text="{t}")'
+    if atype in ("DONE", "FAIL", "THINK", "SCREENSHOT", "GO_BACK", "GO_FORWARD",
+                  "HOVER", "CLOSE_TAB", "RECALL", "REMEMBER"):
+        return atype
+    # fallback：拼接 extra 中非空字段
+    parts = []
+    if action.element_id is not None:
+        parts.append(str(action.element_id))
+    if action.text:
+        parts.append(f'"{action.text[:15]}"')
+    if action.extra:
+        for k, v in action.extra.items():
+            if v:
+                parts.append(f"{k}={v}")
+    suffix = f"({', '.join(parts)})" if parts else ""
+    return f"{atype}{suffix}"

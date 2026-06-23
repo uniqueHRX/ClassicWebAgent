@@ -15,6 +15,7 @@ from classic_web_agent.common.action import ActionSpace
 from classic_web_agent.common.memory import Memory
 from classic_web_agent.common.types import Action, MemoryEntry, PageState
 from classic_web_agent.llm import LLMClient
+from classic_web_agent.logger import fmt_action
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,9 @@ class SubAgent:
         self._planner: Any = None
         self._perception: Any = None
         self._executor: Any = None
+
+        # 当前步骤的动作执行结果（仅本次序列，不含历史）
+        self._last_step_results: str = ""
 
     # ── 唯一公开方法 ─────────────────────────────────────────────
 
@@ -108,7 +112,16 @@ class SubAgent:
                 logger.warning("VLM 未返回动作，终止子任务")
                 break
 
-            # 3. 执行动作序列
+            # 记录 VLM 输出的动作序列（紧凑格式，便于阅读日志）
+            action_desc = " → ".join(fmt_action(a) for a in actions)
+            confidence = actions[0].confidence if actions else 0.0
+            logger.info(
+                "[SubAgent] 步骤 %d 动作序列: %s | conf=%.2f",
+                step, action_desc, confidence,
+            )
+
+            # 3. 执行动作序列（收集全部结果，供 VLM 下一轮决策参考）
+            step_results: list[str] = []
             for action in actions:
                 if action.action_type in ("DONE", "FAIL"):
                     summary = action.text or ""
@@ -120,17 +133,41 @@ class SubAgent:
                         logger.warning("[子任务失败] %s", summary)
                     return self.memory.get_observations()
 
+                # 记录执行前的标签页数量，用于检测 popup 新标签页
+                tabs_before = self.browser.tab_count
+
                 result = executor.execute(action)
+                # 包含 data 字段（EXTRACT 的提取文本、SCREENSHOT 的 data URI 等）
+                if result.data is not None and isinstance(result.data, str) and len(result.data) > 0:
+                    msg = f"[{action.action_type}] {result.message} | data={result.data}"
+                else:
+                    msg = f"[{action.action_type}] {result.message}"
+                step_results.append(msg)
                 self.memory.add_working(
-                    MemoryEntry(
-                        role="assistant",
-                        content=f"[{action.action_type}] {result.message}",
-                    )
+                    MemoryEntry(role="assistant", content=msg)
                 )
 
                 if not result.success:
                     logger.warning("动作失败: %s", result.message)
                     break
+
+                # 检测 popup 新标签页：标签页数增加说明 CLICK 打开了新标签页，
+                # _on_popup 已自动切换 active_index 到新标签页。
+                # 后继动作的 element_id 来自旧标签页的 DOM 树，在新页面上无效，
+                # 应跳过它们，下一轮观察新标签页后由 VLM 重新决策。
+                if self.browser.tab_count > tabs_before:
+                    remaining = len(actions) - actions.index(action) - 1
+                    logger.info(
+                        "%s 打开了新标签页(tab_%d)，跳过后继 %d 个动作",
+                        action.action_type, self.browser.active_index, remaining,
+                    )
+                    break
+
+            # 保存本次序列的完整结果供 VLM 下一轮使用
+            self._last_step_results = "\n".join(step_results)
+            logger.info(
+                "[SubAgent] 步骤 %d 执行结果: %s", step, self._last_step_results
+            )
 
         return self.memory.get_observations()
 
@@ -166,7 +203,9 @@ class SubAgent:
     # ── 辅助 ────────────────────────────────────────────────────
 
     def _last_result_text(self) -> str:
-        recent = self.memory.get_working(limit=1)
-        if recent:
-            return recent[-1].content
-        return ""
+        """返回上一步动作序列的完整执行结果（仅本次序列，不含历史）。
+
+        VLM 输出的是动作序列（如 CLICK → WAIT → EXTRACT），
+        所有动作的执行结果都应可见，而不仅仅是最后一个。
+        """
+        return self._last_step_results

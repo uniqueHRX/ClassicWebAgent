@@ -27,6 +27,7 @@
 import logging
 import time
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from PIL import Image
@@ -600,6 +601,78 @@ class TestBrowserLifecycle:
         assert value == "abc"
         logger.info("PRESS 按键输入: %s", value)
         time.sleep(OBSERVE_DELAY)
+
+
+class TestBrowserPopupListener:
+    """Popup 事件监听器测试（无需真实浏览器）。"""
+
+    def test_register_popup_listener(self) -> None:
+        """_register_popup_listener 调用 page.on('popup', handler)。"""
+        from unittest.mock import ANY
+
+        b = Browser()
+        page = MagicMock()
+        b._register_popup_listener(page)
+        page.on.assert_called_once_with('popup', ANY)
+        logger.info("_register_popup_listener 注册 popup 监听 ✓")
+
+    def test_on_popup_adds_and_switches(self) -> None:
+        """_on_popup 将新页面加入 _pages、创建 CDP session、切换到新标签页。"""
+        b = Browser()
+        b._pages = [MagicMock()]  # 已有 1 个页面
+        b._active_index = 0
+        b._cdp_sessions = {}
+
+        popup = MagicMock()
+        b._on_popup(popup)
+
+        assert len(b._pages) == 2
+        assert b._pages[-1] is popup  # 新页面在末尾
+        assert b._active_index == 1  # 自动切换到新标签页
+        assert id(popup) in b._cdp_sessions  # 创建了 CDP session
+        logger.info("_on_popup 添加新页面并切换到 tab_1 ✓")
+
+    def test_on_popup_duplicate_ignored(self) -> None:
+        """同一页面被多次触发 on_popup（罕见情况），应忽略重复添加。"""
+        b = Browser()
+        popup = MagicMock()
+        b._pages = [MagicMock(), popup]  # popup 已在 _pages 中
+        b._active_index = 0
+        b._cdp_sessions = {id(popup): MagicMock()}
+
+        b._on_popup(popup)  # 再次触发
+
+        assert len(b._pages) == 2  # 不会重复添加
+        assert b._active_index == 1  # 仍应切换到该页面
+        logger.info("_on_popup 重复触发正确忽略 ✓")
+
+    def test_on_popup_chain_new_tab(self) -> None:
+        """从新标签页的点击再打开新标签页（链式），验证递归监听。"""
+        b = Browser()
+        b._pages = [MagicMock()]
+        b._active_index = 0
+        b._cdp_sessions = {}
+
+        # 第一次 popup
+        popup1 = MagicMock()
+        b._on_popup(popup1)
+        assert len(b._pages) == 2
+        assert b._active_index == 1
+
+        # _on_popup 内部调用了 _register_popup_listener(popup1)
+        # 验证 popup1.on 被注册了 popup 监听
+        popup1.on.assert_called_once()
+        call_args = popup1.on.call_args
+        assert call_args is not None
+        assert call_args[0][0] == 'popup'  # 事件类型
+        assert callable(call_args[0][1])    # 处理器是 callable
+
+        # 从 popup1 打开第二次 popup
+        popup2 = MagicMock()
+        b._on_popup(popup2)
+        assert len(b._pages) == 3
+        assert b._active_index == 2
+        logger.info("链式 popup（从新标签页再打开新标签页）✓")
 
 
 # ── 辅助函数 ────────────────────────────────────────────────────────────

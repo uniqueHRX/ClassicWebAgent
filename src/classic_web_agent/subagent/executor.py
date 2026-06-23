@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 # Wait 动作支持的 condition 值（Playwright 规范：无下划线）
 _VALID_WAIT_CONDITIONS = frozenset({"load", "domcontentloaded", "networkidle", "commit"})
 
+# WAIT 动作的超时（毫秒）。Playwright 默认 30s 过长，
+# 持续网络活动（长轮询/SSE）可能导致 networkidle 永不触发。
+# 10s 足够大多数页面完成 domcontentloaded + load，
+# 超时后返回 success（页面已处于当前 load state），不阻塞流程。
+_WAIT_TIMEOUT_MS = 10_000
+
 
 class Executor:
     """动作执行器 —— Action → Playwright 原子操作 + 内部动作。"""
@@ -164,7 +170,34 @@ class Executor:
     def _execute_CLICK(self, action: Action) -> ActionResult:
         if action.element_id is None:
             return ActionResult(success=False, message="CLICK 缺少 element_id")
+
+        tab_count_before = self.browser.tab_count
+        tab_index_before = self.browser.active_index
+
         self.browser.click(action.element_id)
+
+        # 检测是否打开了新标签页（popup 监听器已自动切换到新页）
+        tab_count_after = self.browser.tab_count
+        if tab_count_after > tab_count_before:
+            new_index = tab_count_after - 1
+            return ActionResult(
+                success=True,
+                message=(
+                    f"点击元素 {action.element_id}（链接在新标签页打开，"
+                    f"已自动切换到 tab_{new_index}）"
+                ),
+            )
+        # 检测是否在当前标签页内发生了导航（URL 可能在下一步变化）
+        tab_index_after = self.browser.active_index
+        if tab_index_after != tab_index_before:
+            return ActionResult(
+                success=True,
+                message=(
+                    f"点击元素 {action.element_id}（系统自动切换到 "
+                    f"tab_{tab_index_after}）"
+                ),
+            )
+
         return ActionResult(success=True, message=f"点击元素 {action.element_id}")
 
     def _execute_TYPE(self, action: Action) -> ActionResult:
@@ -223,8 +256,21 @@ class Executor:
                 f"可选: {', '.join(sorted(_VALID_WAIT_CONDITIONS))}",
             )
         page = self.browser.current_page
-        page.wait_for_load_state(condition)
-        return ActionResult(success=True, message=f"等待 {condition} 完成")
+        try:
+            page.wait_for_load_state(condition, timeout=_WAIT_TIMEOUT_MS)
+            return ActionResult(success=True, message=f"等待 {condition} 完成")
+        except Exception as e:
+            # 超时不等同于失败——页面可能已有部分内容（load/domcontentloaded 已触发），
+            # 只是 networkidle 因持续网络活动（长轮询/SSE/广告）未达成。
+            # 返回 success 让 VLM 用下一步的截图+DOM树判断页面是否可用。
+            logger.warning(
+                "WAIT(%s) 超时 (%dms): %s，页面可能仍有内容，继续执行",
+                condition, _WAIT_TIMEOUT_MS, e,
+            )
+            return ActionResult(
+                success=True,
+                message=f"等待 {condition}（超时 {_WAIT_TIMEOUT_MS // 1000}s，已按当前状态继续）",
+            )
 
     def _execute_GOTO(self, action: Action) -> ActionResult:
         extra = action.extra or {}

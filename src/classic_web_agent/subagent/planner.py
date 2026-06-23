@@ -11,6 +11,8 @@ from typing import Any
 
 import yaml
 
+from datetime import datetime
+
 from classic_web_agent.common.action import ActionType
 from classic_web_agent.common.memory import Memory
 from classic_web_agent.common.types import Action, PageState
@@ -107,7 +109,7 @@ class Planner:
         confidence = float(parsed.get("confidence", 0.0))
 
         logger.info(
-            "[VLM] conf=%.2f goal=%s verify=%s",
+            "[SubAgent] conf=%.2f goal=%s verify=%s",
             confidence, goal, verification,
         )
 
@@ -200,10 +202,13 @@ class Planner:
         recent_actions: str,
         current_tab_id: str = "",
         tabs_list: str = "",
+        current_date: str = "",
     ) -> str:
         """填充 user 模板。截图以 image 形式单独传入。"""
+        now = current_date or datetime.now().strftime("%Y-%m-%d %A %H:%M")
         return (
             self._user_template
+            .replace("{current_date}", now)
             .replace("{sub_task}", sub_task)
             .replace("{step_number}", str(step_number))
             .replace("{max_steps}", str(max_steps))
