@@ -44,6 +44,8 @@ class Executor:
         self.action_space = action_space
         self.browser = browser
         self.memory = memory
+        self._consecutive_goto_failures: int = 0
+        self._max_goto_retries: int = 3
 
     # ── 公开入口 ────────────────────────────────────────────────────────
 
@@ -231,8 +233,28 @@ class Executor:
         url = extra.get("url", "")
         if not url:
             return ActionResult(success=False, message="GOTO 缺少 url")
-        self.browser.goto(url)
-        return ActionResult(success=True, message=f"导航到 {url}")
+
+        # 连续 GOTO 失败检测，防止无限重试不可达的 URL
+        if self._consecutive_goto_failures >= self._max_goto_retries:
+            self._consecutive_goto_failures = 0
+            logger.warning("连续 %d 次 GOTO 失败，跳过: %s", self._max_goto_retries, url)
+            return ActionResult(
+                success=False,
+                message=f"连续{self._max_goto_retries}次导航失败，跳过: {url}",
+            )
+
+        try:
+            self.browser.goto(url)
+            self._consecutive_goto_failures = 0
+            return ActionResult(success=True, message=f"导航到 {url}")
+        except Exception as e:
+            self._consecutive_goto_failures += 1
+            logger.warning("GOTO 失败 (第%d次): %s — %s",
+                           self._consecutive_goto_failures, url, e)
+            return ActionResult(
+                success=False,
+                message=f"导航失败 ({self._consecutive_goto_failures}/{self._max_goto_retries}): {e}",
+            )
 
     def _execute_GO_BACK(self, action: Action) -> ActionResult:
         self.browser.go_back()
