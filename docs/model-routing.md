@@ -325,6 +325,9 @@ Memory
 
 并行执行的条件：[`browser.py`](src/classic_web_agent/browser.py) 已支持多标签页（`new_tab()` / `switch_tab()`），且每个标签页有独立的 CDP session（`_cdp_sessions` 字典以页面 ID 为 key）。
 
+VLM prompt 位于 [`subagent/prompts/planner.yaml`](src/classic_web_agent/subagent/prompts/planner.yaml)，
+Executor 和感知模块位于 `subagent/` 目录下。
+
 ### 8.2 并行架构
 
 ```python

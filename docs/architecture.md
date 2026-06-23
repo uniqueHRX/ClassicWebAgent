@@ -9,25 +9,25 @@ ClassicWebAgent 是一个由自然语言指令驱动的网页多模态 Agent 系
 ## 核心架构
 
 ```
-用户任务 → Agent 主循环 → 浏览器操作
-              │
-   ┌──────────┼──────────┐
-   │          │          │
-感知模块   规划模块    执行模块
-(VLM)     (LLM)      (Playwright)
+用户任务 → LLM (Agent) → 子任务清单 → VLM (SubAgent) → 浏览器操作
+                            │                              │
+                    逐个子任务执行 ← observations 返回参与
+                                            │
+                                     LLM 汇总生成报告
 ```
 
-- **感知** (`perception.py`)：VLM 视觉分析 + DOM 解析，理解当前页面状态
-- **规划** (`planner.py`)：LLM 推理下一步最优动作
-- **执行** (`executor.py` + `browser.py`)：将动作翻译为 Playwright 浏览器操作
-- **验证** (`verifier.py`)：检查动作效果，支持自动恢复
+系统采用 **双层 Agent 架构**：
+
+- **LLM 层**（`agent/`）：战略级决策者。将用户任务分解为子任务清单，逐项派发给 VLM，收到结果后汇总生成报告。
+- **VLM 层**（`subagent/`）：战术级执行者。自治执行单个子任务（看图→决策→操作→验证→循环），返回 observations。
+- **Executor**（`subagent/executor.py` + `browser.py`）：将 Action 翻译为 Playwright 浏览器操作。
 
 ## 双模型协作
 
-- **VLM**（视觉语言模型）：高频战术执行——看页面、做决策、执行动作
-- **LLM**（大语言模型）：低频战略规划——任务分解、异常恢复、路径审查
+- **LLM**（大语言模型）：Agent 的"大脑"——负责任务分解、子任务调度、报告生成。
+- **VLM**（视觉语言模型）：SubAgent 的"眼睛和手"——分析页面截图和 DOM，输出操作动作。
 
-三种运行模式：`auto`（推荐）、`vlm_only`（纯 VLM）、`dual_model`（对照实验）。详见 [模型调度方案](model-routing.md)。
+LLM 是 VLM 的调用者，两者通过 `SubAgent.run(sub_task) → observations` 接口通信。
 
 ## 动作空间
 
@@ -52,16 +52,14 @@ python -m classic_web_agent --task "你的任务描述"
 ## 项目结构
 
 ```
-src/classic_web_agent/   # 主包
-├── agent/               # Agent 核心（感知/规划/执行/验证/记忆）
+src/classic_web_agent/
+├── common/              # 共享数据模型（types/memory/action）
+├── agent/               # LLM 主代理（core + director）
+├── subagent/            # VLM 子代理（core + planner + executor + perception + verifier）
 ├── browser.py           # Playwright 浏览器驱动
 ├── llm.py               # LLM/VLM 客户端
 ├── logger.py            # 结构化日志
 └── main.py              # CLI 入口
-
-config/                  # 配置与提示词模板
-scripts/                 # 辅助脚本
-docs/                    # 文档
 ```
 
 ## 技术栈
