@@ -33,6 +33,8 @@ class SubAgent:
         vlm: LLMClient | None = None,
         browser: Any | None = None,
         memory: Memory | None = None,
+        subagent_config: dict[str, Any] | None = None,
+        save_trace_fn: Any = None,
     ) -> None:
         """初始化子代理。
 
@@ -40,10 +42,14 @@ class SubAgent:
             vlm: VLM 客户端（视觉模型）。
             browser: 浏览器驱动。
             memory: 共享记忆（必须传入，由 Agent 创建后注入）。
+            subagent_config: subagent 配置字典，包含 confidence_threshold 等。
+            save_trace_fn: 轨迹保存回调，签名 fn(data_uri, tree_text, task_id="")。
         """
         self.vlm = vlm
         self.browser = browser
         self.memory = memory or Memory()
+        self.subagent_config = subagent_config or {}
+        self.save_trace_fn = save_trace_fn
 
         # 内部组件（懒加载）
         self._planner: Any = None
@@ -52,13 +58,14 @@ class SubAgent:
 
     # ── 唯一公开方法 ─────────────────────────────────────────────
 
-    def run(self, sub_task: str) -> str:
+    def run(self, sub_task: str, task_id: str = "") -> str:
         """执行单个子任务。
 
         输入子任务描述 → 内部 ReAct 循环 → 输出 observations。
 
         Args:
             sub_task: LLM 分解的子任务描述（自然语言）。
+            task_id: 子任务编号（用于截图命名，如 "001"）。
 
         Returns:
             observations 字符串（VLM 每步 memory 字段的拼接）。
@@ -78,6 +85,15 @@ class SubAgent:
             if not state.url:
                 logger.warning("页面状态为空，跳过此步")
                 continue
+
+            # 保存 Perception 返回的完整轨迹（截图 + DOM 树，同时间戳）
+            # 命名格式: task_id_step_timestamp.png / .txt
+            if self.save_trace_fn and state.screenshot:
+                try:
+                    trace_id = f"{task_id}_{step}"
+                    self.save_trace_fn(state.screenshot, state.tree_text, task_id=trace_id)
+                except Exception as e:
+                    logger.warning("[SubAgent] 轨迹保存失败: %s", e)
 
             # 2. VLM 决策
             actions = planner.plan(
@@ -129,7 +145,12 @@ class SubAgent:
     def _get_planner(self) -> Any:
         if self._planner is None:
             from classic_web_agent.subagent.planner import Planner
-            self._planner = Planner(vlm=self.vlm, memory=self.memory)
+            confidence = self.subagent_config.get("confidence_threshold", 0.9)
+            self._planner = Planner(
+                vlm=self.vlm,
+                memory=self.memory,
+                confidence_threshold=confidence,
+            )
         return self._planner
 
     def _get_executor(self) -> Any:

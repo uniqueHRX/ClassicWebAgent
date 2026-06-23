@@ -1,4 +1,4 @@
-"""Agent 主框架的单元测试 —— 验证从 main 到 Agent.run 的完整调用链。"""
+"""Agent 主框架的单元测试 —— 验证数据模型和工厂函数。"""
 
 import logging
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class TestAgentFramework:
-    """Agent 主框架 —— 工厂函数、ReAct 闭环、数据模型。"""
+    """Agent 主框架 —— 工厂函数、数据模型。"""
 
     def test_create_agent(self):
         """工厂函数应返回正确配置的 Agent 实例。"""
@@ -29,22 +29,10 @@ class TestAgentFramework:
         assert isinstance(agent, Agent)
         assert agent.logger is not None
         assert agent.memory is not None
-        assert agent.action_space is not None
-        assert agent.perception is not None
-        assert agent.planner is not None
-        assert agent.executor is not None
-        assert agent.verifier is not None
+        assert agent.llm is not None
+        assert agent.vlm is not None
+        assert agent.browser is not None
         logger.info("Agent 创建成功 ✓")
-
-    def test_agent_run(self):
-        """Agent.run 应完成 ReAct 闭环，返回 TaskResult。"""
-        config = {}
-        agent = create_agent(config)
-        result = agent.run("测试任务")
-        assert isinstance(result, TaskResult)
-        assert result.success is True
-        assert result.total_steps >= 1
-        logger.info("ReAct 闭环完成，共 %d 步", result.total_steps)
 
     def test_action_type_values(self):
         """验证 21 个动作类型枚举。"""

@@ -114,3 +114,35 @@ class TaskResult:
     success: bool = True
     summary: str = ""
     total_steps: int = 0
+
+
+# ── Director 相关数据类型 ──────────────────────────────────────
+
+
+@dataclass
+class TodoItem:
+    """Director 的子任务条目。"""
+
+    id: int = 0
+    goal: str = ""
+    status: str = "pending"  # pending | in_progress | completed | failed
+    summary: str = ""
+
+
+@dataclass
+class NextAction:
+    """Director 的下一步动作。"""
+
+    type: str = "done"       # "sub_task" | "done"
+    description: str = ""
+
+
+@dataclass
+class DirectorOutput:
+    """Director LLM 调用的结构化输出。"""
+
+    thinking: str = ""
+    task_plan: str = ""      # 详实的任务计划书（首次 plan 必填）
+    todo_list: list[TodoItem] = field(default_factory=list)
+    next: NextAction = field(default_factory=NextAction)
+    raw: str = ""            # LLM 原始返回文本（调试用）

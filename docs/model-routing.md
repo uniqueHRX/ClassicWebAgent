@@ -297,9 +297,9 @@ Memory
 | 阶段 | 内容 | 依赖 |
 |------|------|------|
 | **阶段一**（✅） | Infrastructure: Browser, LLMClient, Perception, Executor, Memory | — |
-| **阶段二**（下一步） | VLM Planner: 看图输出 Action + memory + confidence | prompt 模板 |
-| **阶段三** | LLM Planner: 任务分解 + 调用 VLM + 汇总报告 | prompt 模板 |
-| **阶段四** | 完整双层架构: LLM ↔ VLM 系统调用 | 阶段二 + 三 |
+| **阶段二**（✅） | VLM Planner: 看图输出 Action + memory + confidence | prompt 模板 |
+| **阶段三**（✅） | LLM Director: 任务分解 + 子任务调度 + 报告生成 | prompt 模板 |
+| **阶段四**（进行中） | 完整双层架构: LLM ↔ VLM 系统调用 + 运行目录系统 + 配置管理 | 阶段二 + 三 |
 | **阶段五**（远期） | 多 VLM 并行：LLM 同时调度多个 VLM 在独立标签页中执行 | 阶段四 + 异步支持 |
 
 ---

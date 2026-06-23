@@ -1,1 +1,18 @@
-{}
+{
+  "agent": {
+    "model": "deepseek-v4-flash",
+    "base_url": "",
+    "api_key": "",
+    "temperature": 0.1
+  },
+  "subagent": {
+    "model": "mimo-v2.5",
+    "base_url": "",
+    "api_key": "",
+    "temperature": 0.1,
+    "confidence_threshold": 0.9
+  },
+  "headless": false,
+  "log_trace": true,
+  "log_level": "INFO"
+}

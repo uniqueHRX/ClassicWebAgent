@@ -44,6 +44,7 @@ class Planner:
         self,
         vlm: LLMClient | None,
         memory: Memory | None = None,
+        confidence_threshold: float = 0.9,
     ) -> None:
         self.vlm = vlm
         self.memory = memory
@@ -54,7 +55,7 @@ class Planner:
         self._load_prompt()
 
         # confidence 机制
-        self.confidence_threshold: float = 0.9
+        self.confidence_threshold: float = confidence_threshold
         self._retry_count: int = 0
         self._max_retries: int = 3
 
@@ -107,7 +108,7 @@ class Planner:
 
         logger.info(
             "[VLM] conf=%.2f goal=%s verify=%s",
-            confidence, goal[:60], verification[:60],
+            confidence, goal, verification,
         )
 
         # 4. 记录 memory 到 observations
@@ -221,7 +222,7 @@ class Planner:
             return ""
         recent = self.memory.get_working(limit=5)
         return "\n".join(
-            f"  [{i}] {e.content[:100]}" for i, e in enumerate(recent)
+            f"  [{i}] {e.content}" for i, e in enumerate(recent)
         )
 
     # ═══════════════════════════════════════════════════════════════════

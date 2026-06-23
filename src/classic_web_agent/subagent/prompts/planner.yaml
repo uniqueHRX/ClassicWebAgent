@@ -120,8 +120,8 @@ system:
           params: {key: 字符串}
           desc: 按键（Enter/Escape/Tab 等）
         - name: WAIT
-          params: {condition: load/network_idle}
-          desc: 等待页面加载完成
+          params: {condition: load/domcontentloaded/networkidle/commit}
+          desc: 等待页面加载完成（load=所有资源加载完, domcontentloaded=DOM就绪, networkidle=网络空闲, commit=导航完成）
 
     - category: 导航
       page_change_risk: high  # 一定会改变页面

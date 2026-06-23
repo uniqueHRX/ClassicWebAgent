@@ -21,8 +21,8 @@ from classic_web_agent.browser import Browser, BrowserError
 
 logger = logging.getLogger(__name__)
 
-# Wait 动作支持的 condition 值
-_VALID_WAIT_CONDITIONS = frozenset({"load", "domcontentloaded", "network_idle"})
+# Wait 动作支持的 condition 值（Playwright 规范：无下划线）
+_VALID_WAIT_CONDITIONS = frozenset({"load", "domcontentloaded", "networkidle", "commit"})
 
 
 class Executor:
