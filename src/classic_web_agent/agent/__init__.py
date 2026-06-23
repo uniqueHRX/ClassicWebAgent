@@ -1,7 +1,7 @@
-"""Agent 核心模块。"""
+"""Agent 主代理模块。"""
 
 from classic_web_agent.agent.core import Agent
-from classic_web_agent.agent.types import (
+from classic_web_agent.common.types import (
     PageState,
     Action,
     ActionResult,

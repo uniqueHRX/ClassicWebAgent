@@ -1,17 +1,16 @@
-"""动作空间 (CoALA Action Space) —— 外部动作 + 内部动作 + 合法性校验。
+"""动作空间 (CoALA Action Space) —— 外部 + 内部动作 + 校验。
 
-设计详见 docs/action-space.md：
-- 16 个外部动作（浏览器操作）+ 5 个内部动作（推理/记忆）= 21 个动作
+16 个外部动作（浏览器操作）+ 5 个内部动作（推理/记忆）= 21 个动作。
 """
 
 from enum import Enum, auto
 from typing import Any
 
-from classic_web_agent.agent.types import Action, PageState
+from classic_web_agent.common.types import Action, PageState
 
 
 class ActionType(Enum):
-    """动作类型枚举 —— 21 个动作（16 外部 + 5 内部）。"""
+    """动作类型枚举 —— 21 个动作。"""
 
     # 元素交互
     CLICK = auto()
@@ -26,7 +25,7 @@ class ActionType(Enum):
     GOTO = auto()
     GO_BACK = auto()
     GO_FORWARD = auto()
-    # 标签页管理
+    # 标签页
     NEW_TAB = auto()
     CLOSE_TAB = auto()
     SWITCH_TAB = auto()
@@ -34,7 +33,7 @@ class ActionType(Enum):
     SCREENSHOT = auto()
     EXTRACT = auto()
     FIND = auto()
-    # 内部动作
+    # 内部
     THINK = auto()
     REMEMBER = auto()
     RECALL = auto()
@@ -50,15 +49,11 @@ class ActionSpace:
         self._repeated_count: int = 0
 
     def validate(self, action: Action, state: PageState) -> bool:
-        """校验动作的合法性（阶段一：放行所有动作，返回 True）。"""
         return True
 
     def detect_repetition(self, action: Action) -> bool:
-        """检测连续重复动作（≥3 次相同类型 → 标记为异常）。"""
-        if (
-            self._last_action is not None
-            and self._last_action.action_type == action.action_type
-        ):
+        if (self._last_action is not None
+                and self._last_action.action_type == action.action_type):
             self._repeated_count += 1
         else:
             self._repeated_count = 0

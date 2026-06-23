@@ -1,6 +1,7 @@
-"""Agent 数据模型 —— 集中定义核心数据结构。
+"""Agent 数据模型 —— agent 和 subagent 共享的核心数据结构。
 
-包含：PageState, Action, ActionResult, MemoryEntry, AgentStep, PlanStep, Plan, TaskResult。
+包含：PageState, Action, ActionResult, MemoryEntry, KnowledgeItem,
+      AgentStep, PlanStep, Plan, TaskResult。
 """
 
 from dataclasses import dataclass, field
@@ -15,6 +16,8 @@ class PageState:
     url: str = ""               # 当前页面 URL
     title: str = ""             # 页面标题
     tree_text: str = ""         # 可交互元素树文本（含 backendNodeId）
+    current_tab_id: str = ""    # 当前标签页标识（如 "tab_0"）
+    tabs_list: str = ""         # 所有标签页的文本描述
 
 
 @dataclass
@@ -25,18 +28,7 @@ class Action:
         action_type: 动作类型名称（如 "CLICK"、"TYPE"、"DONE"）。
         element_id: SoM 元素引用（外部动作），CDP backendNodeId。
         text: 文本参数（TYPE / THINK / DONE / FAIL / FIND）。
-        extra: 扩展参数字典，承载类型相关数据：
-            - MOUSE_CLICK: {"x": int, "y": int}
-            - SCROLL: {"direction": "up" | "down"}
-            - WAIT: {"condition": "load" | "network_idle" | "selector"}
-            - GOTO: {"url": str}
-            - PRESS: {"key": str}
-            - NEW_TAB: {"url": str | None}
-            - SWITCH_TAB: {"tab_index": int}
-            - EXTRACT: {"element_id": int | None}
-            - FIND: {"text": str, "exact": bool}
-            - REMEMBER: {"key": str, "value": str}
-            - RECALL: {"query": str}
+        extra: 扩展参数字典。
         confidence: VLM 生成此动作时的置信度（默认 1.0）。
     """
 
@@ -53,6 +45,7 @@ class ActionResult:
 
     success: bool = True
     message: str = ""
+    data: Any = None
 
 
 @dataclass
@@ -62,6 +55,17 @@ class MemoryEntry:
     role: str = ""          # "user" / "assistant" / "system" / "observation"
     content: str = ""
     metadata: dict[str, Any] | None = None
+
+
+@dataclass
+class KnowledgeItem:
+    """结构化的知识条目。LLM 汇总报告用。"""
+
+    category: str = ""
+    key: str = ""
+    value: str = ""
+    source_url: str = ""
+    sub_task_id: int = 0
 
 
 @dataclass
@@ -77,14 +81,7 @@ class AgentStep:
 
 @dataclass
 class PlanStep:
-    """粗粒度计划步骤。
-
-    Fields:
-        id: 步骤序号。
-        goal: 本步骤目标（自然语言描述）。
-        fallback: 自救提示 —— VLM 执行失败时先尝试此策略。
-        status: pending / active / completed / failed。
-    """
+    """粗粒度计划步骤。"""
 
     id: int = 0
     goal: str = ""
@@ -100,7 +97,6 @@ class Plan:
 
     @property
     def current_step(self) -> PlanStep | None:
-        """返回第一个 pending 的步骤。"""
         for step in self.steps:
             if step.status == "pending":
                 return step
@@ -108,8 +104,7 @@ class Plan:
 
     @property
     def remaining_steps(self) -> list[PlanStep]:
-        """返回所有未完成的步骤。"""
-        return [s for s in self.steps if s.status != "completed" and s.status != "failed"]
+        return [s for s in self.steps if s.status not in ("completed", "failed")]
 
 
 @dataclass
@@ -119,3 +114,35 @@ class TaskResult:
     success: bool = True
     summary: str = ""
     total_steps: int = 0
+
+
+# ── Director 相关数据类型 ──────────────────────────────────────
+
+
+@dataclass
+class TodoItem:
+    """Director 的子任务条目。"""
+
+    id: int = 0
+    goal: str = ""
+    status: str = "pending"  # pending | in_progress | completed | failed
+    summary: str = ""
+
+
+@dataclass
+class NextAction:
+    """Director 的下一步动作。"""
+
+    type: str = "done"       # "sub_task" | "done"
+    description: str = ""
+
+
+@dataclass
+class DirectorOutput:
+    """Director LLM 调用的结构化输出。"""
+
+    thinking: str = ""
+    task_plan: str = ""      # 详实的任务计划书（首次 plan 必填）
+    todo_list: list[TodoItem] = field(default_factory=list)
+    next: NextAction = field(default_factory=NextAction)
+    raw: str = ""            # LLM 原始返回文本（调试用）

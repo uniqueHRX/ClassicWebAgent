@@ -1,265 +1,388 @@
-# 模型调度方案：LLM/VLM 协作与层级规划路由
+# 模型调度方案：LLM/VLM 双层协作
 
-> 设计日期：2026-06-11 | 修订：2026-06-13
-> 关联文档：[主设计方案](design.md) | [动作空间设计](action-space.md) | [感知模块设计](perception-design.md)
-> 状态：设计阶段，尚未实现代码
+> 设计日期：2026-06-11 | 修订：2026-06-22（反映 LLM=VLM 新分工定位）
+> 关联文档：[主设计方案](design.md) | [动作空间设计](action-space.md) | [感知模块设计](perception-design.md) | [Memory 增强方案](../plans/memory-enhancement-plan.md)
 
 ---
 
-## 1. 核心思想：战略与战术分离
-
-LLM 与 VLM 的分工不是"每一步"的交替，而是**战略与战术的分离**：
+## 1. 核心思想
 
 ```
-LLM 层（战略规划，低频调用）:
-  用户任务 → 粗粒度步骤链 → [步1, 步2, 步3, ...]
-                               │
-VLM 层（战术执行，高频调用）:
-  步 i → 感知→决策→执行→验证 循环 → 完成 / 求救
-                                          │
-                              ┌───────────┴───────────┐
-                         步完成                    低置信度/验证失败
-                            │                           │
-                      LLM 更新后续计划              LLM 介入处理
+LLM（调用者）                    VLM（被调用者 / 工具）
+────────────                    ───────────────────────
+分解任务为子任务清单             接收单个子任务
+每次调用 VLM 执行一个子任务      自治执行（内部 ReAct 循环 + confidence 机制）
+VLM 返回 → LLM 审查 → 再调用    完成后返回 observations 给 LLM
+汇总所有 observations 生成报告   不保留跨调用状态
 ```
 
-**LLM 调用次数**从"每步 1 次"降为"每粗粒度步骤约 0.1~0.3 次"（仅在规划、求救、审查时调用）。
+LLM 有**持久上下文**——VLM 每次返回的 observations 通过消息历史在 LLM 上下文中自明，不需要额外的结构化存储。
 
 ---
 
-## 2. 架构总览
+## 2. 调用流程
 
-```mermaid
-graph TD
-    TASK[用户自然语言任务]
-    PLAN["Planner.create_plan()<br/>LLM: 一次生成粗粒度步骤链"]
-    NEXT{还有步骤?}
-    STEP[取下一步]
-    VLM_LOOP["VLM 执行循环:<br/>感知→决策→执行→验证"]
-    RETRY{"可重试?<br/>(RETRY)"}
-    FAIL{"需要 LLM?<br/>(ESCALATE)"}
-    LLM_RECOVER["Planner.recover()<br/>LLM: 介入处理"]
-    REPLAN{"需要重规划?"}
-    LLM_REPLAN["Planner.replan()<br/>LLM: 重规划后续步骤"]
-    STEP_DONE[步骤完成]
-    LLM_REVIEW["Planner.review_plan()<br/>LLM: 审查后续步骤"]
-    DONE[任务完成]
+```
+LLM 调用 1: create_plan(task)
+  → 返回子任务清单: [子任务1, 子任务2, 子任务3]
 
-    TASK --> PLAN
-    PLAN --> NEXT
-    NEXT -->|是| STEP
-    STEP --> VLM_LOOP
-    VLM_LOOP -->|验证通过| STEP_DONE
-    VLM_LOOP -->|验证失败| RETRY
-    RETRY -->|RETRY: 页面未大变| VLM_LOOP
-    RETRY -->|ESCALATE: 页面剧变/持续低置信| FAIL
-    FAIL -->|是| LLM_RECOVER
-    LLM_RECOVER --> REPLAN
-    REPLAN -->|是| LLM_REPLAN
-    REPLAN -->|否| VLM_LOOP
-    LLM_REPLAN --> NEXT
-    STEP_DONE --> LLM_REVIEW
-    LLM_REVIEW --> NEXT
-    NEXT -->|否| DONE
+LLM 调用 2: "请执行子任务1" + VLM.execute(子任务1)
+  VLM 自治执行
+  → 返回 observations: "论文A: A Novel Approach (2025)\n摘要: This paper..."
+
+LLM 调用 3: "收到，请执行子任务2" + VLM.execute(子任务2)
+  ...同上...
+
+LLM 调用 4: "所有子任务完成，生成对比报告"
+  → 返回最终报告
 ```
 
+**LLM 调用次数** ≈ N+2（N=子任务数）。
+
 ---
 
-## 3. LLM 层：粗粒度规划
+## 3. LLM 执行逻辑
 
-### 3.1 步骤粒度定义
+### 3.1 伪代码
 
-粗粒度步骤定义为 **"单页面内的子目标"**。过粗会导致 VLM 在长链中迷失，过细则退化为每步调 LLM。
-
-**示例**：
+```python
+def llm_agent_run(task: str):
+    """LLM 作为调用者的主循环。"""
+    messages = [SystemMessage("你是一个网页任务规划者..."), UserMessage(task)]
+    
+    # 调用 1: 初始规划
+    plan = llm.chat(messages + [UserMessage("请分解为子任务")])
+    
+    all_observations = []
+    for step in plan.steps:
+        # 调用 2..N: 调度每个子任务
+        messages.append(AssistantMessage(f"请执行: {step.goal}"))
+        obs = vlm.execute(sub_task=step.goal)
+        messages.append(UserMessage(f"子任务{step.id}完成: {obs}"))
+        all_observations.append(obs)
+        # LLM 检查结果，可决定跳过/重试/修改后续计划
+    
+    # 调用 N+1: 汇总报告
+    report = llm.chat(messages + [UserMessage("请生成最终报告")])
+    return report
 ```
-任务: "在京东搜索 iPhone 15 并加入购物车"
 
-LLM 产出步骤链:
-  步骤1: 打开京东首页                       ← 导航
-  步骤2: 搜索 "iPhone 15" 并进入结果页       ← 单页面内完整操作
-  步骤3: 找到第一个商品并加入购物车           ← 可能跨子页面
-  步骤4: 确认购物车中有该商品                 ← 验证
+### 3.2 示例：串行依赖子任务
+
+以下展示 LLM 根据 VLM 返回动态决定下一个子任务（子任务间有数据依赖）：
+
+```
+用户: "帮我找一款适合摄影师的笔记本电脑，预算8000左右"
+
+━━ LLM 调用 1: create_plan ━━━━━━━━━━━━━━━━━━━━━━━
+LLM 初始规划:
+  子任务1: 在京东搜索笔记本，收集7000-9000元产品列表
+  （后续待定，需根据结果决定）
+
+━━ LLM 调用 2: 调度子任务1 ━━━━━━━━━━━━━━━━━━━━━━━
+LLM → VLM: "在京东搜索'笔记本电脑 摄影师'，列出7000-9000元产品"
+
+VLM 执行:
+  Step 1: GOTO jd.com → TYPE 搜索 → CLICK
+          memory: "进入京东搜索页"
+  Step 2: EXTRACT 产品列表
+          memory: "找到: ThinkPad X1(8499), MateBook 16(7999),
+                  MacBook Air M3(8999), ProArt(8299), XPS 15(7699), 战99(7299)"
+  Step 3: DONE
+  → observations: "找到6款7000-9000元产品..."
+
+━━ LLM 调用 3: 审查 + 规划子任务2 ━━━━━━━━━━━━━━━━━
+LLM 审查 observations:
+  "8000预算适中价位是7999(MateBook)和8299(ProArt)。
+  我先了解 MateBook 16 的详细配置。"
+
+LLM → VLM: "进入MateBook 16详情页，获取CPU/GPU/内存/屏幕色域"
+
+VLM 执行:
+  Step 1: CLICK 商品 → 进入详情
+  Step 2: EXTRACT 参数
+          memory: "i7-13700H, RTX4060, 32GB DDR5, 16英寸 100% DCI-P3"
+  Step 3: DONE
+  → observations: "配置: i7+4060+32GB+100%DCI-P3"
+
+━━ LLM 调用 4: 审查 + 规划子任务3 ━━━━━━━━━━━━━━━━━
+LLM: "MateBook适合摄影师。找类似价位竞品对比。"
+LLM → VLM: "获取ProArt和MacBook Air M3配置，记录与MateBook的差异"
+
+VLM 执行:
+  Step 1: GO_BACK → CLICK ProArt → EXTRACT
+          memory: "ProArt: R9-7940H, RTX4060, 16GB, 100% sRGB"
+  Step 2: GO_BACK → CLICK MacBook → EXTRACT
+          memory: "MacBook Air M3: M3芯片, 16GB, 15.3寸, macOS, 续航12h"
+  Step 3: DONE
+
+━━ LLM 调用 5: generate_report ━━━━━━━━━━━━━━━━━━━━━
+  → 生成三款产品的对比报告，推荐 MateBook 16
 ```
 
-步骤2 由 VLM 自行完成：识别搜索框 → 输入 → 点击搜索 → 等待加载。这些是"动作自明"的操作，无需 LLM 参与。
+### 3.3 示例：可并行子任务
 
-### 3.2 PlanStep 数据结构
+以下展示 LLM 将**互不依赖**的子任务并行调度。这类子任务天然适合使用多个 VLM 实例同时执行（见 §8 讨论）。
 
-每个粗粒度步骤包含以下字段：
+```
+用户: "收集最近一周内关于'多模态大模型幻觉问题'的最新研究进展"
 
-- **id**：步骤序号
-- **goal**：本步骤目标（自然语言描述）
-- **fallback**：自救提示——VLM 执行失败时先尝试此策略，失败再呼叫 LLM
-- **status**：`pending` / `active` / `completed` / `failed`
+━━ LLM 调用 1: create_plan ━━━━━━━━━━━━━━━━━━━━━━━
+LLM: "这个任务需要从多个学术来源收集论文。各来源互不依赖，可以并行执行。"
 
-Plan 为步骤链的容器，聚合 `PlanStep` 列表，提供 `current_step` 和 `remaining_steps` 便捷访问属性。
+LLM 初始规划（4个独立子任务，无依赖关系）:
+  子任务1: 在 arxiv.org 搜索 "multimodal LLM hallucination 2025"，列出最新5篇
+  子任务2: 在 Semantic Scholar 搜索同主题，列出最新5篇
+  子任务3: 在 Google Scholar 搜索，列出最新5篇
+  子任务4: 在 Papers With Code 搜索，列出最新5篇
 
-### 3.3 步骤链 vs 步骤树
+注 ⚡: 子任务1-4 完全独立，可以并行执行，每个在独立浏览器标签页中运行。
+  执行结束后 LLM 汇总去重，再规划串行子任务（如深入阅读某篇论文）。
 
-| 方式 | 优点 | 缺点 |
-|------|------|------|
-| 链 + LLM 动态修复 | 简单，与"失败→调 LLM"天然吻合 | LLM 介入时需传足够上下文 |
-| 树（预埋分支） | LLM 少调一次 | 预判所有分支困难；树爆炸 |
+━━ LLM 调用 2-5: 并行调度（逻辑并行，实际可按序或异步） ━━━
 
-采用 **链 + fallback**：每个 `PlanStep` 带 `fallback` 字段，VLM 先自救，自救失败再呼叫 LLM。
+LLM → VLM[tab1]: "在 arxiv 搜索 multimodal LLM hallucination 2025，列5篇"
+  VLM 执行:
+    GOTO arxiv → TYPE → EXTRACT → DONE
+    → observations: "1. Paper A: Survey of Hallucination (arxiv.org/abs/2501.xxx)\n
+                    2. Paper B: Mitigating Visual Hallucination...\n..."
 
----
+LLM → VLM[tab2]: "在 Semantic Scholar 搜索同主题，列5篇"
+  VLM 执行:
+    GOTO semanticscholar → TYPE → EXTRACT → DONE
+    → observations: "1. Paper A: Survey of Hallucination... (重复)\n
+                    2. Paper F: RLAIF for MLLM... (新发现)\n..."
 
-## 4. VLM 层：战术执行循环
+LLM → VLM[tab3]: "在 Google Scholar 搜索同主题"
+  VLM 执行: ...同上...
 
-### 4.1 概述
+LLM → VLM[tab4]: "在 Papers With Code 搜索同主题"
+  VLM 执行: ...同上...
 
-VLM 执行层负责单个粗粒度步骤内的感知→决策→执行→验证循环。每次循环调用 VLM 观察当前页面状态（截图 + DOM 结构），做出原子动作决策，交由 Executor 执行，再由 Verifier 验证结果。
+━━ LLM 调用 6: 汇总去重 + 深度分析 ━━━━━━━━━━━━━━━━
 
-### 4.2 求救分级
+LLM 收到4组 observations，进行去重和交叉对比:
 
-VLM 执行失败时区分两个级别：
+LLM 审查:
+  "4个来源共找到18篇论文，去重后10篇。
+  其中5篇综述类，3篇提出新方法，2篇基准评测。
+  重点关注2篇高引用新方法论文。"
 
-| 级别 | 触发条件 | 处理方式 |
-|------|---------|---------|
-| **RETRY** | 验证失败但页面结构未大变（URL 相同、主要元素仍在） | VLM 自行重试 1~2 次，不调用 LLM |
-| **ESCALATE** | 页面跳转到意外 URL / 连续 2 次 RETRY 失败 / 置信度持续 < 0.5 | 调用 `Planner.recover()` 请求 LLM 介入 |
+LLM 规划串行子任务:
+  子任务5: 进入 Paper F (RLAIF for MLLM) 的详情页，提取摘要和方法
+  子任务6: 进入 Paper G (Cross-modal Consistency) 详情页，提取摘要
 
-RETRY 与 ESCALATE 的分级避免了"页面轻微变动就呼叫 LLM"的低效，又保证了"页面剧变或持续低置信"时能及时获得 LLM 的高层次推理支持。
+LLM → VLM: "进入 Paper F arxiv页面，提取摘要和核心方法描述"
+  VLM 执行: GOTO arxiv/abs/xxx → EXTRACT → DONE
+  → observations: "Paper F 摘要: 提出基于RLAIF的多模态幻觉检测框架..."
 
-### 4.3 三级决策路由
+LLM → VLM: "进入 Paper G 详情页，提取摘要"
+  VLM 执行: ...同上...
 
-VLM 执行层每次做动作决策时，按以下优先级判断：
+━━ LLM 调用 9: generate_report ━━━━━━━━━━━━━━━━━━━━━
+  → 生成: "多模态大模型幻觉问题最新研究进展综述"
+    含: 10篇论文列表、研究方法分类、关键趋势、2篇重点论文深度分析
+```
 
-**Level 1 — 动作自明（confidence ≥ 阈值，默认 0.9）**
+### 3.4 子任务调度模式
 
-VLM 对当前页面状态有高度把握，直接输出下一步动作，跳过 Planner（LLM）。仅消耗 1 次 VLM API 调用。典型场景：搜索框已定位，直接键入关键词；明确的"下一步"按钮已高亮。
-
-**Level 2 — Skill 匹配（页面模式命中已知 Skill）**
-
-VLM 识别出当前页面匹配已知的 Skill 模式（如"百度搜索页"、"通用登录页"），复用预定义的交互流程，跳过 Planner。仅消耗 1 次 VLM API 调用用于页面模式识别。Skill 库在阶段二实现。
-
-**Level 3 — 需要推理（以上均不满足）**
-
-VLM 判断当前情况复杂、置信度不足，或 Level 1/2 均失败。此时触发 ESCALATE，调用 LLM（Planner）进行高层次推理。消耗 1 次 VLM + 1 次 LLM API 调用。典型场景：面对多个可能路径需要分析选择；页面布局与预期偏差较大。
-
-**路由回退规则**：Level 1 失败后直接回退到 Level 3（ESCALATE），不在 Level 1 内反复重试。Level 2 匹配失败同理。
-
----
-
-## 5. 步间上下文：StepSummary 与 PageSnapshot
-
-每一步完成后，LLM 需要了解"发生了什么"才能审查和更新后续计划。步间上下文由两个数据结构承载：
-
-### 5.1 PageSnapshot — 页面结构化快照
-
-精简的页面状态描述，用于在 LLM 层传递页面信息（而非传递完整截图）：
-
-- **url**：当前页面 URL
-- **title**：页面标题
-- **key_elements**：页面主要交互元素摘要列表（如 `["搜索框", "登录按钮", "导航栏"]`）
-- **visible_text_summary**：页面可见文本摘要（截取前约 500 字符）
-
-### 5.2 StepSummary — 步骤完成摘要
-
-聚合一个粗粒度步骤的完整执行记录：
-
-- **step_id** / **goal**：对应 PlanStep 的标识和目标
-- **status**：`"completed"` / `"partial"` / `"failed"`
-- **start_snapshot**：步骤开始时的页面快照（可选）
-- **end_snapshot**：步骤结束时的页面快照
-- **key_observations**：VLM 总结的步骤期间关键变化列表
-- **actions_taken**：本步骤内执行的原子动作总数
-- **confidence_trace**：各子动作的置信度序列（如 `[0.95, 0.92, 0.88, 0.91, 0.50, 0.45]`）
-- **error_description**：失败原因描述（status 为 failed 时）
-
-### 5.3 置信度轨迹的价值
-
-`confidence_trace` 的作用不止于事后诊断。LLM 审查时如果发现置信度逐步下降的趋势（如从 0.95 逐步滑落到 0.45），可以提前对后续步骤做出调整——例如拆分为更小的子步骤、或增加验证检查点——而不等到真正失败。
+| 模式 | 特征 | 适用场景 |
+|------|------|---------|
+| **串行依赖** | 子任务 n+1 依赖子任务 n 的结果，LLM 根据 observations 动态决定 | 对比决策型（如购物比价、逐步深入调研） |
+| **并行独立** | 子任务之间无依赖，互不干扰 | 信息收集型（如多源搜索、多站点数据采集） |
+| **混合** | 先并行收集 → LLM 汇总去重 → 串行深度分析 | 复杂调研任务 |
 
 ---
 
-## 6. Planner 角色扩展
+## 4. VLM 执行逻辑
 
-为实现层级规划，`Planner` 从单一的"每步生成动作"扩展为四个职责明确的方法：
+### 4.1 调用契约
 
-| 方法 | 调用时机 | 职责 |
-|------|---------|------|
-| `create_plan(task, memory)` | 任务开始 | LLM 一次性分析任务，生成粗粒度步骤链（`Plan`） |
-| `recover(observation, step, memory)` | VLM ESCALATE 求救 | LLM 分析当前页面状态和步骤目标，给出恢复动作或判定需要重规划 |
-| `replan(observation, memory)` | `recover()` 判定需重规划 | LLM 基于当前页面状态，重新生成从当前位置到任务完成的剩余步骤链 |
-| `review_plan(plan, summary, memory)` | 每个步骤完成后 | LLM 根据步骤结果审查后续步骤的合理性，必要时调整顺序、合并或拆分 |
+```
+输入:  子任务目标（自然语言字符串）
+输出:  observations（字符串 —— VLM 每步 memory 的拼接）
+```
 
----
+VLM 类似于一个 `async function`：接收子任务，返回结果。
 
-## 7. 运行模式
+### 4.2 伪代码
 
-系统支持三种运行模式，通过 `config.json` 中的 `agent.mode` 配置：
+```python
+def vlm_execute(sub_task: str) -> str:
+    """VLM 自治执行单个子任务。"""
+    memory.clear_observations()
+    memory.clear_working()
+    
+    step = 0
+    retry_count = 0
+    confidence_threshold = 0.9
+    
+    while step < MAX_STEPS:
+        state = perception.observe()
+        
+        response = vlm.chat(
+            system="你是网页操作助手...",
+            user=f"子任务: {sub_task}\n"
+                 f"截图: {state.screenshot}\n"
+                 f"DOM树: {state.tree_text}\n"
+                 f"最近操作: {memory.get_working(limit=5)}"
+        )
+        
+        if response.confidence >= confidence_threshold:
+            executor.execute(response.action)
+            memory.add_observation(response.memory)
+            retry_count = 0
+        else:
+            retry_count += 1
+            if retry_count >= 3:
+                return memory.get_observations() + "\n[FAIL] 连续3次低置信度"
+            continue
+        
+        if response.action.action_type == "DONE":
+            return memory.get_observations()
+        if response.action.action_type == "FAIL":
+            return memory.get_observations() + f"\n[FAIL] {response.action.text}"
+        
+        step += 1
+    
+    return memory.get_observations() + "\n[FAIL] 超步数"
+```
 
-### 7.1 `auto`（推荐）
+### 4.3 Confidence 机制
 
-完整的层级规划模式：
-- 任务开始 → LLM 生成粗粒度步骤链（`create_plan`）
-- 每步由 VLM 自行执行，仅在求救时回调 LLM
-- 每步完成后 LLM 审查后续计划（`review_plan`）
-- 效率与精度平衡，适用于通用任务
-
-### 7.2 `vlm_only`
-
-完全不调用 LLM：
-- 跳过 `create_plan`——将整个任务视为单个粗粒度步骤
-- VLM 内部始终走 Level 1（动作自明），无法决策时直接失败
-- 适用于简单任务、低成本运行、快速原型验证
-
-### 7.3 `dual_model`
-
-保留兼容的传统双模型模式：
-- 每步都调用 VLM 感知 + LLM 规划
-- 不做层级优化，不做步间审查
-- 适用于对照实验、精度优先场景
-
----
-
-## 8. 运行模式配置项
-
-| 配置项 | 类型 | 说明 |
-|--------|------|------|
-| `agent.mode` | `str` | 运行模式：`"auto"` / `"dual_model"` / `"vlm_only"` |
-| `agent.confidence_threshold` | `float` | Level 1 动作自明触发阈值 |
-| `agent.max_retry_per_step` | `int` | RETRY 最大次数，超过后触发 ESCALATE |
-| `agent.planning.review_after_each_step` | `bool` | 完成一步后是否调用 LLM 审查后续计划 |
-
----
-
-## 9. 与参考资料的对齐
-
-| 参考资料 | 本方案对应点 |
-|---------|------------|
-| **CoALA (2024)** | LLM 层对应 Decision Cycle（Proposal/Evaluation），VLM 层对应 Observation + Selection/Execution |
-| **ReAct** | VLM 执行循环保留 Thought-Action-Observation 交替 |
-| **Mind2Web (2023)** | "粗粒度规划 + 细粒度执行"的分层设计 |
-| **SeeAct (2024)** | "感知先行，按需推理"——VLM 高置信度直行，低置信度调 LLM（Level 1 → Level 3） |
-| **V-GEMS / See and Remember (2026)** | 步骤完成后更新状态、重评估路径（`review_plan`）；URL 栈与 `PageSnapshot` |
-| **WebVoyager (2024)** | VLM 直接输出动作——对应 Level 1 和 vlm_only 模式 |
-| **browser-harness** | Skill 库短路（Level 2）+ 自愈机制（RETRY / ESCALATE 分级） |
-
----
-
-## 10. 实施建议
-
-| 阶段 | 实施内容 |
-|------|---------|
-| **阶段一** | `mode: "vlm_only"`——最简单的端到端闭环（VLM 看图→出动作→执行→验证，不调 LLM），产出可演示的最小闭环系统 |
-| **阶段二** | `mode: "dual_model"`——引入 Planner，VLM 感知 + LLM 每步规划，建立对照基线 |
-| **阶段三** | `mode: "auto"`——实现层级规划 + 三级路由 + 求救分级 + 步间审查 |
-
----
-
-## 11. 已确认决策总结
-
-| 事项 | 决策 |
+| 条件 | 行为 |
 |------|------|
-| 粗粒度步骤粒度 | **单页面内子目标**；LLM 产出步骤链 + fallback（不预埋分支树） |
-| `confidence_threshold` 默认值 | **0.9**，可通过 `config.json` 调整 |
-| Level 1 失败后策略 | **回退到 Level 3**（ESCALATE → `Planner.recover()`），不重试 Level 1 |
-| RETRY / ESCALATE 分级 | RETRY ≤ 2 次（页面未大变）；超过则 ESCALATE |
-| 步间上下文 | 每步完成后传递 `StepSummary`（含 `start_snapshot` / `end_snapshot` / `confidence_trace`） |
-| LLM 步后审查 | 默认开启（`planning.review_after_each_step: true`） |
-| CLI 参数覆盖 | **不需要**，`config.json` 配置即可 |
-| 目录结构 | **零变更** |
+| `confidence >= threshold`（默认 0.9） | 直接执行动作，`memory` 追加到 `observations` |
+| `confidence < threshold` | VLM 重新规划当前步骤（不执行动作） |
+| 连续 3 次重规划均不达标 | 退回上一状态 → 返回 FAIL 给 LLM |
+
+### 4.4 VLM 输出格式
+
+参照 browser-use 的 `AgentOutput`：
+
+```python
+{
+    "thinking": "当前页面是搜索结果，找到 6 款产品...",
+    "memory": "找到6款产品: ThinkPad X1(8499), MateBook 16(7999), ...",
+    "action": {"action_type": "CLICK", "element_id": 1548},
+    "confidence": 0.95
+}
+```
+
+每次 VLM 输出中的 `memory` 字段自动调用 `Memory.add_observation()`。
+
+---
+
+## 5. Memory 设计
+
+```
+Memory
+├── observations: list[str]         ← VLM 维护（每步子任务内累积）
+│   └── VLM 返回的 memory 字段自动调用 add_observation()
+│   └── 每次子任务开始前 clear_observations()
+│
+├── working: list[MemoryEntry]      ← VLM/Executor 维护
+│   └── 操作步骤记录（最近几步，VLM 内部上下文）
+│
+├── knowledge: dict[str, list[KnowledgeItem]]  ← 预留，暂不使用
+│   └── LLM 有持久上下文，VLM 的 observations 在消息历史中自明
+│
+└── url_stack: list[str]
+```
+
+---
+
+## 6. 实施路径
+
+| 阶段 | 内容 | 依赖 |
+|------|------|------|
+| **阶段一**（✅） | Infrastructure: Browser, LLMClient, Perception, Executor, Memory | — |
+| **阶段二**（✅） | VLM Planner: 看图输出 Action + memory + confidence | prompt 模板 |
+| **阶段三**（✅） | LLM Director: 任务分解 + 子任务调度 + 报告生成 | prompt 模板 |
+| **阶段四**（进行中） | 完整双层架构: LLM ↔ VLM 系统调用 + 运行目录系统 + 配置管理 | 阶段二 + 三 |
+| **阶段五**（远期） | 多 VLM 并行：LLM 同时调度多个 VLM 在独立标签页中执行 | 阶段四 + 异步支持 |
+
+---
+
+## 7. 与旧设计的区别
+
+| 维度 | 旧设计 | 新设计 |
+|------|--------|--------|
+| LLM 定位 | 每步辅助决策（与 VLM 平级） | VLM 的调用者（高一层） |
+| VLM 定位 | ReAct 循环中的一个参与者 | 被 LLM 调用的自治工具 |
+| Confidence | Level 1/2/3 + RETRY/ESCALATE | 阈值判定 + 3 次重上限 |
+| Planner 方法 | 5 | 2 (create_plan / generate_report) |
+| knowledge | LLM 汇总使用 | 预留不用 |
+| 子任务模式 | 仅串行 | 串行 / 并行 / 混合 |
+
+---
+
+## 8. 多 VLM 并行化的可行性探讨
+
+### 8.1 是否能并行？
+
+**可以。** VLM 本质是一个异步的正则函数调用：输入子任务描述，返回 observations。多个 VLM 之间**没有共享状态**——每个 VLM 在自己的浏览器标签页中运行，拥有独立的 CDP session 和 Memory。
+
+并行执行的条件：[`browser.py`](src/classic_web_agent/browser.py) 已支持多标签页（`new_tab()` / `switch_tab()`），且每个标签页有独立的 CDP session（`_cdp_sessions` 字典以页面 ID 为 key）。
+
+VLM prompt 位于 [`subagent/prompts/planner.yaml`](src/classic_web_agent/subagent/prompts/planner.yaml)，
+Executor 和感知模块位于 `subagent/` 目录下。
+
+### 8.2 并行架构
+
+```python
+import asyncio
+
+async def llm_run_parallel(sub_tasks: list[str]) -> list[str]:
+    """LLM 并行调度多个 VLM。"""
+    
+    # 为每个子任务创建独立的浏览器标签页
+    tabs = [browser.new_tab() for _ in sub_tasks]
+    
+    # 并行执行：每个 VLM 在独立标签页中运行
+    async def run_one(task: str, tab_index: int):
+        browser.switch_tab(tab_index)
+        return await vlm_execute_async(task)
+    
+    results = await asyncio.gather(*[
+        run_one(task, i) for i, task in enumerate(sub_tasks)
+    ])
+    
+    return results
+```
+
+### 8.3 优势
+
+- **时间效率**：4 个并行子任务耗时 ≈ max(单个) 而非 sum(所有)
+- **信息收集类任务**：多源搜索天然可并行（arxiv + Semantic Scholar + Google Scholar 可同时进行）
+- **LLM 的等待成本消失**：VLM 执行期间 LLM 不需要空闲等待
+
+### 8.4 需要解决的问题
+
+| 挑战 | 解决方案 |
+|------|---------|
+| 浏览器标签页管理 | 为每个并行子任务创建独立标签页，执行完关闭 |
+| CDP Session 隔离 | 每个标签页有独立 CDP session（`browser.py` 已支持） |
+| Memory 隔离 | 并行 VLM 需要**独立的 Memory 实例**，各自的 observations 不混淆 |
+| VLM API 并发限制 | 取决于 API 提供商（如 OpenAI 的 rate limit），可用异步控制并发数 |
+| LLM 结果汇聚 | 所有 VLM 完成后，LLM 收到一组 observations，进行去重/合并/交叉验证 |
+| 错误恢复 | 并行 VLM 之一失败不影响其他；LLM 汇总时标记失败子任务 |
+
+### 8.5 何时做
+
+**阶段五**，在基础双层架构（阶段四）稳定之后再考虑。原因：
+
+1. 并行化增加了调试复杂性（多标签页 + 多 Memory 实例）
+2. 基础架构需要先验证 VLM 自治执行的可靠性
+3. 串行模式已能覆盖大部分场景；并行化是效率优化而非功能必需
+4. Python asyncio + Playwright async API 需要额外的集成工作
+
+---
+
+## 9. 修订记录
+
+| 日期 | 变更 |
+|------|------|
+| 2026-06-11 | 初稿：LLM/VLM 平级 + 三级路由 + 求救分级 |
+| 2026-06-13 | 新增 confidence_threshold、StepSummary |
+| 2026-06-22 | **重大重写**：LLM→VLM 调用者；每子任务返回 LLM；串行依赖示例；可并行子任务示例；多 VLM 并行化可行性探讨（阶段五） |

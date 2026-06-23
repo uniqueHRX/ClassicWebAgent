@@ -84,7 +84,7 @@ SoM 标注的盲区 fallback。当目标在 Canvas、WebGL、iframe 内或动态
 
 **`WAIT`** — 显式等待
 
-用于语义级等待：等待搜索结果渲染、等待价格加载、等待验证码出现。这些只有 VLM 知道"等到什么程度"，Executor 的通用等待无法替代。`condition` 取 `"load"` / `"network_idle"` / `"selector"`。
+用于语义级等待：等待搜索结果渲染、等待价格加载、等待验证码出现。这些只有 VLM 知道"等到什么程度"，Executor 的通用等待无法替代。`condition` 取 Playwright 标准值：`"load"`（所有资源加载完）/ `"domcontentloaded"`（DOM 就绪）/ `"networkidle"`（网络空闲）/ `"commit"`（导航完成）。
 
 > 设计依据：WebVoyager 和 browser-harness 均将 wait 作为一等动作。
 
@@ -152,7 +152,7 @@ SoM 标注的盲区 fallback。当目标在 Canvas、WebGL、iframe 内或动态
 |------|-------|
 | `MOUSE_CLICK` | `{"x": int, "y": int}` |
 | `SCROLL` | `{"direction": "up" \| "down"}` |
-| `WAIT` | `{"condition": "load" \| "network_idle" \| "selector"}` |
+| `WAIT` | `{"condition": "load" \| "domcontentloaded" \| "networkidle" \| "commit"}` |
 | `GOTO` | `{"url": str}` |
 | `PRESS` | `{"key": str}` |
 | `NEW_TAB` | `{"url": str \| None}` |
