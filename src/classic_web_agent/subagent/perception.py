@@ -455,32 +455,54 @@ class Perception:
             5. 组装 PageState
 
         Returns:
-            PageState 对象。浏览器未启动时返回全字段为空的 PageState。
+            PageState 对象。浏览器未启动或页面异常时返回安全的空 PageState。
         """
         if not self.browser or not self.browser._browser:
             return PageState()
 
-        page = self.browser.current_page
+        try:
+            page = self.browser.current_page
+        except Exception as e:
+            logger.warning("[Perception] 获取当前页面失败: %s", e)
+            return PageState()
 
-        # ── 步骤 1: 截图 ──
-        screenshot = self.browser.screenshot()
+        # ── 步骤 1: 截图（带保护，页面崩溃时不会抛异常） ──
+        try:
+            screenshot = self.browser.screenshot()
+        except Exception as e:
+            logger.warning("[Perception] 截图失败: %s", e)
+            screenshot = ""
 
         # ── 步骤 2: CDP 三流采集 ──
-        cdp = self.browser.get_cdp_session(page)
+        try:
+            cdp = self.browser.get_cdp_session(page)
+            dom_result = cdp.send("DOM.getDocument", {"depth": -1})
+            ax_result = cdp.send("Accessibility.getFullAXTree")
+        except Exception as e:
+            logger.warning("[Perception] CDP 采集失败: %s", e)
+            try:
+                return PageState(screenshot=screenshot, url=page.url, title=page.title())
+            except Exception:
+                return PageState(screenshot=screenshot)
 
-        dom_result = cdp.send("DOM.getDocument", {"depth": -1})
-        ax_result = cdp.send("Accessibility.getFullAXTree")
-        snapshot_result = cdp.send("DOMSnapshot.captureSnapshot", {
-            "computedStyles": [],
-        })
+        try:
+            snapshot_result = cdp.send("DOMSnapshot.captureSnapshot", {
+                "computedStyles": [],
+            })
+        except Exception:
+            snapshot_result = {"documents": []}
 
         # ── 步骤 3 & 4: 构建增强树 + 序列化 ──
-        ax_lookup = _build_ax_lookup(ax_result)
-        snapshot_lookup = _build_snapshot_lookup(snapshot_result)
-        root = _build_enhanced_tree(
-            dom_result["root"], ax_lookup, snapshot_lookup,
-        )
-        tree_text = _serialize(root)
+        try:
+            ax_lookup = _build_ax_lookup(ax_result)
+            snapshot_lookup = _build_snapshot_lookup(snapshot_result)
+            root = _build_enhanced_tree(
+                dom_result["root"], ax_lookup, snapshot_lookup,
+            )
+            tree_text = _serialize(root)
+        except Exception as e:
+            logger.warning("[Perception] DOM 树构建失败: %s", e)
+            tree_text = ""
 
         # ── 标签页信息 ──
         try:
@@ -495,10 +517,17 @@ class Perception:
             tabs_list = ""
 
         # ── 步骤 5: 组装 PageState ──
+        try:
+            url = page.url
+            title = page.title()
+        except Exception:
+            url = ""
+            title = ""
+
         return PageState(
             screenshot=screenshot,
-            url=page.url,
-            title=page.title(),
+            url=url,
+            title=title,
             tree_text=tree_text,
             current_tab_id=tab_id,
             tabs_list=tabs_list,
