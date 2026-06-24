@@ -60,6 +60,9 @@ class SubAgent:
         # 当前步骤的动作执行结果（仅本次序列，不含历史）
         self._last_step_results: str = ""
 
+        # 当前子任务的完成状态（供 Agent 保存到 sub_tasks.json）
+        self.current_status: dict | None = None
+
     # ── 唯一公开方法 ─────────────────────────────────────────────
 
     def run(self, sub_task: str, task_id: str = "") -> str:
@@ -129,8 +132,10 @@ class SubAgent:
                         self.memory.add_observation(summary)
                     if action.action_type == "DONE":
                         logger.info("[子任务完成] %s", summary)
+                        self.current_status = {"status": "completed", "summary": summary}
                     else:
                         logger.warning("[子任务失败] %s", summary)
+                        self.current_status = {"status": "failed", "summary": summary}
                     return self.memory.get_observations()
 
                 # 记录执行前的标签页数量，用于检测 popup 新标签页
