@@ -88,8 +88,12 @@ def create_agent(config: dict[str, Any]) -> Agent:
     agent.llm = LLMClient(mode="llm")
     agent.vlm = LLMClient(mode="vlm")
 
-    # 浏览器
-    agent.browser = Browser(headless=config.get("headless", False))
+    # 浏览器（支持持久化 user_data_dir）
+    user_data_dir = config.get("user_data_dir", "") or None
+    agent.browser = Browser(
+        headless=config.get("headless", False),
+        user_data_dir=user_data_dir,
+    )
     agent.browser.launch()
 
     # 记忆

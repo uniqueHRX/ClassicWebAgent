@@ -14,6 +14,8 @@
 import logging
 from typing import Any
 
+from playwright._impl._errors import TimeoutError as PlaywrightTimeoutError
+
 from classic_web_agent.common.action import ActionSpace
 from classic_web_agent.common.memory import Memory
 from classic_web_agent.common.types import Action, ActionResult, MemoryEntry
@@ -176,7 +178,32 @@ class Executor:
         tab_count_before = self.browser.tab_count
         tab_index_before = self.browser.active_index
 
-        self.browser.click(action.element_id)
+        # 尝试正常点击，若被弹窗/覆盖层拦截则降级为 force=True 重试
+        first_error: Exception | None = None
+        try:
+            self.browser.click(action.element_id)
+        except (PlaywrightTimeoutError, Exception) as e:
+            first_error = e
+            error_str = str(e)
+            is_overlay = "intercepts pointer events" in error_str or "Timeout" in error_str
+            if not is_overlay:
+                return ActionResult(success=False, message=f"执行异常: {error_str}")
+
+            logger.warning(
+                "CLICK 被覆盖层拦截（%s），降级为 force=True 重试...",
+                error_str[:80],
+            )
+            try:
+                self.browser.click(action.element_id, force=True)
+            except Exception as e2:
+                return ActionResult(
+                    success=False,
+                    message=f"执行异常（force 降级仍失败）: {e2}",
+                )
+            return ActionResult(
+                success=True,
+                message=f"点击元素 {action.element_id}（force=True 覆盖点击）",
+            )
 
         # 检测是否打开了新标签页（popup 监听器已自动切换到新页）
         tab_count_after = self.browser.tab_count

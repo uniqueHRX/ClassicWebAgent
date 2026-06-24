@@ -484,3 +484,141 @@ class TestPerceptionIntegration:
                 "tabs_list 应标记当前标签页:\n" + state.tabs_list
             )
             logger.info("双标签页 tabs_list:\n%s", state.tabs_list)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# SoM 标注测试
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class TestSomCollectedElements:
+    """_collect_som_elements() 单元测试 —— 收集可交互元素的准确性。"""
+
+    def test_collects_interactive_elements(self) -> None:
+        from classic_web_agent.subagent.perception import (
+            EnhancedDOMNode, Bounds, _collect_som_elements,
+        )
+
+        btn = EnhancedDOMNode(
+            backend_node_id=1234, node_type=1, tag_name="button",
+            is_interactive=True, is_hidden=False,
+            bounds=Bounds(x=10, y=20, width=100, height=30),
+        )
+        result = _collect_som_elements(btn)
+        assert len(result) == 1
+        assert result[0]["backend_node_id"] == 1234
+        assert result[0]["x"] == 10
+        assert result[0]["y"] == 20
+
+    def test_skips_hidden_elements(self) -> None:
+        from classic_web_agent.subagent.perception import (
+            EnhancedDOMNode, Bounds, _collect_som_elements,
+        )
+
+        hidden_btn = EnhancedDOMNode(
+            backend_node_id=1, node_type=1, tag_name="button",
+            is_interactive=True, is_hidden=True,
+            bounds=Bounds(x=0, y=0, width=100, height=30),
+        )
+        result = _collect_som_elements(hidden_btn)
+        assert len(result) == 0
+
+    def test_skips_non_interactive(self) -> None:
+        from classic_web_agent.subagent.perception import (
+            EnhancedDOMNode, Bounds, _collect_som_elements,
+        )
+
+        div = EnhancedDOMNode(
+            backend_node_id=2, node_type=1, tag_name="div",
+            is_interactive=False, is_hidden=False,
+            bounds=Bounds(x=0, y=0, width=200, height=100),
+        )
+        result = _collect_som_elements(div)
+        assert len(result) == 0
+
+    def test_skips_tiny_elements(self) -> None:
+        from classic_web_agent.subagent.perception import (
+            EnhancedDOMNode, Bounds, _collect_som_elements,
+        )
+
+        tiny = EnhancedDOMNode(
+            backend_node_id=3, node_type=1, tag_name="a",
+            is_interactive=True, is_hidden=False,
+            bounds=Bounds(x=0, y=0, width=3, height=2),
+        )
+        result = _collect_som_elements(tiny)
+        assert len(result) == 0
+
+    def test_collects_nested_elements(self) -> None:
+        from classic_web_agent.subagent.perception import (
+            EnhancedDOMNode, Bounds, _collect_som_elements,
+        )
+
+        container = EnhancedDOMNode(
+            backend_node_id=0, node_type=1, tag_name="div",
+            is_interactive=False, is_hidden=False,
+        )
+        btn1 = EnhancedDOMNode(
+            backend_node_id=10, node_type=1, tag_name="button",
+            is_interactive=True, is_hidden=False,
+            bounds=Bounds(x=0, y=0, width=50, height=20),
+        )
+        btn2 = EnhancedDOMNode(
+            backend_node_id=11, node_type=1, tag_name="a",
+            is_interactive=True, is_hidden=False,
+            bounds=Bounds(x=100, y=0, width=50, height=20),
+        )
+        container.children = [btn1, btn2]
+        result = _collect_som_elements(container)
+        assert len(result) == 2
+        assert result[0]["backend_node_id"] == 10
+        assert result[1]["backend_node_id"] == 11
+
+
+class TestSomAnnotation:
+    """annotate_screenshot() 单元测试 —— 截图标注的正确性。"""
+
+    def test_returns_original_on_empty(self) -> None:
+        from classic_web_agent.subagent.som import annotate_screenshot
+
+        result = annotate_screenshot("", [])
+        assert result == ""
+
+    def test_annotates_valid_png(self) -> None:
+        from classic_web_agent.subagent.som import annotate_screenshot
+        from PIL import Image, ImageDraw
+        import io, base64
+
+        # 创建一张纯色测试 PNG
+        img = Image.new("RGB", (200, 100), color=(255, 255, 255))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+        elements = [
+            {
+                "backend_node_id": 42,
+                "tag_name": "button",
+                "x": 10, "y": 20,
+                "width": 80, "height": 30,
+            },
+        ]
+        result = annotate_screenshot(data_uri, elements)
+        assert result.startswith("data:image/png;base64,")
+        assert len(result) > len(data_uri), "标注后图片应比原始大（含编号）"
+
+    def test_out_of_bounds_label_clamped(self) -> None:
+        """元素靠近边缘时标签不应超出截图边界。"""
+        from classic_web_agent.subagent.som import annotate_screenshot
+        from PIL import Image
+        import io, base64
+
+        img = Image.new("RGB", (100, 50), color=(255, 255, 255))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        data_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+        # 元素在左上角，标签应被 clamp 到截图内
+        elements = [{"backend_node_id": 1, "tag_name": "button", "x": 0, "y": 0, "width": 10, "height": 10}]
+        result = annotate_screenshot(data_uri, elements)
+        assert result.startswith("data:image/png;base64,")

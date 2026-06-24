@@ -28,6 +28,7 @@ executor.py 负责 Action → Browser 原子操作的映射编排。
 import base64
 import io
 import logging
+from pathlib import Path
 from typing import Any
 
 from PIL import Image
@@ -98,14 +99,18 @@ class Browser:
         browser.close()
     """
 
-    def __init__(self, headless: bool = True) -> None:
+    def __init__(self, headless: bool = True,
+                 user_data_dir: str | None = None) -> None:
         """初始化浏览器管理器（此时未启动 Playwright）。
 
         Args:
             headless: 是否无头模式。True 为无头（默认，适合 CI/脚本）；
                        False 为有头（开发调试时可观察浏览器操作）。
+            user_data_dir: Chrome 用户数据目录路径（持久化 cookies/localStorage）。
+                          为 None 时不使用持久化配置。
         """
         self.headless = headless
+        self.user_data_dir = user_data_dir
 
         self._pw: PW_Playwright | None = None
         self._browser: PW_Browser | None = None
@@ -116,14 +121,23 @@ class Browser:
 
     # ── 生命周期 ────────────────────────────────────────────────────────
 
+    def _apply_stealth(self, page: PW_Page) -> None:
+        """对页面应用 playwright-stealth 反检测补丁。"""
+        try:
+            from playwright_stealth import Stealth
+            Stealth().apply_stealth_sync(page)
+            logger.debug("Stealth 补丁已应用到页面")
+        except Exception:
+            logger.debug("Stealth 补丁应用失败")
+
     def launch(self) -> None:
         """启动 Chromium 浏览器并创建默认页面（和 CDP session）。
 
         具体流程：
             1. 启动 Playwright 驱动进程
             2. launch Chromium（headless/s headless 取决于构造参数）
-            3. 创建默认 BrowserContext
-            4. 创建默认 Page 并注册 popup 事件监听
+            3. 创建默认 BrowserContext（如果配置了 user_data_dir 则用持久化模式）
+            4. 创建默认 Page 并注册 popup 事件监听 + 对话框监听
             5. 为 Page 创建 CDP session
 
         注意：launch 后立即可以调用 goto/click/screenshot 等方法。
@@ -134,17 +148,46 @@ class Browser:
             return
 
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=self.headless)
-        self._context = self._browser.new_context()
-        page = self._context.new_page()
-        self._register_popup_listener(page)
-        self._pages = [page]
+
+        if self.user_data_dir:
+            # 持久化模式：launch_persistent_context 自动管理 profile
+            profile_path = Path(self.user_data_dir).resolve()
+            profile_path.mkdir(parents=True, exist_ok=True)
+            self._context = self._pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile_path),
+                headless=self.headless,
+                args=[
+                    "--start-maximized",
+                    "--disable-blink-features=AutomationControlled"
+                ] if not self.headless
+                else [
+                    "--disable-blink-features=AutomationControlled"
+                ],
+            )
+            # persistent_context 自带 browser 和 pages
+            self._browser = self._context.browser
+            pages = self._context.pages
+            page = pages[0] if pages else self._context.new_page()
+            self._pages = [page]
+            logger.info(
+                "浏览器已启动（持久化模式）headless=%s profile=%s",
+                self.headless, profile_path,
+            )
+        else:
+            self._browser = self._pw.chromium.launch(headless=self.headless)
+            self._context = self._browser.new_context()
+            page = self._context.new_page()
+            self._pages = [page]
+            logger.info(
+                "浏览器已启动 headless=%s",
+                self.headless,
+            )
+
         self._active_index = 0
+        self._register_popup_listener(page)
         self._create_cdp_session(page)
-        logger.info(
-            "浏览器已启动 headless=%s",
-            self.headless,
-        )
+        self._register_dialog_handler(page)
+        self._apply_stealth(page)
 
     def close(self) -> None:
         """关闭浏览器，清理所有资源。
@@ -243,12 +286,15 @@ class Browser:
         1. 如果该页面尚未在 _pages 中，则添加并创建 CDP session
         2. 自动切换到新标签页
         3. 为新标签页也注册 popup 监听（链式打开）
+        4. 注册 CDP 对话框自动接收
         """
         if popup not in self._pages:
             self._register_popup_listener(popup)
             self._pages.append(popup)
             try:
                 self._create_cdp_session(popup)
+                self._register_dialog_handler(popup)
+                self._apply_stealth(popup)
             except Exception:
                 logger.warning("为新标签页创建 CDP session 失败", exc_info=True)
         self._active_index = len(self._pages) - 1
@@ -256,6 +302,39 @@ class Browser:
             "检测到新标签页，已自动切换至 tab_%d（共 %d 个标签页）",
             self._active_index, len(self._pages),
         )
+
+    # ── CDP 对话框自动接收 ───────────────────────────────────────────────
+
+    def _register_dialog_handler(self, page: PW_Page) -> None:
+        """注册 CDP Page.javascriptDialogOpening 事件监听，自动接受对话框。
+
+        JS 弹窗（alert/confirm/prompt/beforeunload）会阻塞 CDP 命令，
+        注册此监听后自动调用 handleJavaScriptDialog 消除阻塞。
+        """
+        cdp = self._cdp_sessions.get(id(page))
+        if cdp is None:
+            return
+        try:
+            cdp.send("Page.enable")
+            cdp.on("Page.javascriptDialogOpening", self._make_dialog_handler(cdp))
+            logger.debug("已注册 CDP 对话框自动接收")
+        except Exception as e:
+            logger.warning("注册 CDP 对话框监听失败: %s", e)
+
+    @staticmethod
+    def _make_dialog_handler(cdp: PW_CDPSession):
+        """创建对话框处理闭包。"""
+        def handler(params: dict) -> None:
+            dialog_type = params.get("type", "alert")
+            message = params.get("message", "")
+            logger.info("[Dialog] 自动接受 %s: %s", dialog_type, message[:100])
+            try:
+                # alert/confirm/beforeunload → accept；prompt → dismiss
+                accept = dialog_type in ("alert", "confirm", "beforeunload")
+                cdp.send("Page.handleJavaScriptDialog", {"accept": accept})
+            except Exception as e:
+                logger.warning("[Dialog] 处理失败: %s", e)
+        return handler
 
     # ── CDP Session ─────────────────────────────────────────────────────
 
@@ -391,14 +470,27 @@ class Browser:
 
     # ── 元素交互 ────────────────────────────────────────────────────────
 
-    def click_element(self, handle: ElementHandle) -> None:
-        """点击一个 ElementHandle。"""
-        handle.click()
+    def click_element(self, handle: ElementHandle, force: bool = False) -> None:
+        """点击一个 ElementHandle。
 
-    def click(self, backend_node_id: int) -> None:
-        """通过 backendNodeId 点击元素（CLICK 动作）。"""
+        Args:
+            handle: Playwright ElementHandle。
+            force: 为 True 时跳过可见性/启用/稳定性检查（用于弹窗覆盖场景）。
+        """
+        kwargs = {}
+        if force:
+            kwargs["force"] = True
+        handle.click(**kwargs)
+
+    def click(self, backend_node_id: int, force: bool = False) -> None:
+        """通过 backendNodeId 点击元素（CLICK 动作）。
+
+        Args:
+            backend_node_id: CDP backendNodeId。
+            force: 为 True 时跳过可见性/启用/稳定性检查。
+        """
         handle = self.resolve_node(backend_node_id)
-        self.click_element(handle)
+        self.click_element(handle, force=force)
 
     def type_text(self, handle: ElementHandle, text: str) -> None:
         """向 ElementHandle 输入文本（自动清除现有内容，TYPE 动作）。"""
@@ -538,7 +630,12 @@ class Browser:
             data URI 字符串，格式 'data:image/png;base64,...'。
             可直接作为 VLM 的 image_url content part。
         """
-        raw = self.current_page.screenshot(type="png", full_page=full_page)
+        # scale="css" 确保截图尺寸与 CDP 坐标单位一致（CSS 像素）
+        # 默认 scale="device" 在高 DPI 屏上会产生产物图像素 > CSS 像素，
+        # 导致 SoM 标注的坐标与截图元素实际位置不对齐。
+        raw = self.current_page.screenshot(
+            type="png", full_page=full_page, scale="css",
+        )
         img = Image.open(io.BytesIO(raw))
         buf = io.BytesIO()
         img.save(buf, format="PNG", optimize=True)

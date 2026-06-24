@@ -12,8 +12,10 @@
     "temperature": 0.1,
     "confidence_threshold": 0.9
   },
-  "headless": false,
+
+  "headless": true,
   "log_trace": true,
   "log_level": "INFO",
-  "report_format": "both"
+  "report_format": "both",
+  "user_data_dir": "./chrome_profile"
 }
