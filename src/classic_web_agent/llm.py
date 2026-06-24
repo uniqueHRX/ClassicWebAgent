@@ -67,7 +67,7 @@ class LLMClient:
         base_url: str | None = None,
         model_name: str | None = None,
         max_retries: int = 3,
-        timeout: int = 60,
+        timeout: int = 180,
     ) -> None:
         """初始化 LLM/VLM 客户端。
 

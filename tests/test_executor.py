@@ -293,6 +293,44 @@ class TestExecutorWithMockBrowser:
         mock_browser.extract_text.assert_called_once()
         logger.info("EXTRACT → result.data ✓")
 
+    def test_GET_ELEMENT_finds_matches(self, mock_browser: MagicMock) -> None:
+        """GET_ELEMENT 返回所有匹配元素的格式化信息。"""
+        mock_browser.find_elements_by_text.return_value = [
+            {"tag": "a", "id": "", "classes": ["dropdown-item"],
+             "text": "设为首页", "x": 120, "y": 340, "w": 80, "h": 32},
+            {"tag": "div", "id": "menu", "classes": ["menu-content"],
+             "text": "个人设置", "x": 120, "y": 380, "w": 80, "h": 32},
+        ]
+        executor = Executor(ActionSpace(), browser=mock_browser)
+        result = executor.execute(
+            Action(action_type="GET_ELEMENT", extra={"text": "设置"})
+        )
+        assert result.success is True
+        assert "找到 2 个" in result.message
+        assert '<a.dropdown-item> "设为首页" @(120,340,80,32)' in result.data
+        assert '<div#menu.menu-content> "个人设置" @(120,380,80,32)' in result.data
+        mock_browser.find_elements_by_text.assert_called_once_with("设置", exact=False)
+        logger.info("GET_ELEMENT 匹配成功，data 格式正确 ✓")
+
+    def test_GET_ELEMENT_no_match(self, mock_browser: MagicMock) -> None:
+        """GET_ELEMENT 无匹配时返回 failure。"""
+        mock_browser.find_elements_by_text.return_value = []
+        executor = Executor(ActionSpace(), browser=mock_browser)
+        result = executor.execute(
+            Action(action_type="GET_ELEMENT", extra={"text": "不存在"})
+        )
+        assert result.success is False
+        assert "未找到" in result.message
+        logger.info("GET_ELEMENT 无匹配 → failure ✓")
+
+    def test_GET_ELEMENT_missing_text(self, mock_browser: MagicMock) -> None:
+        """GET_ELEMENT 缺 text 参数时返回 failure。"""
+        executor = Executor(ActionSpace(), browser=mock_browser)
+        result = executor.execute(Action(action_type="GET_ELEMENT"))
+        assert result.success is False
+        assert "缺少 text" in result.message
+        logger.info("GET_ELEMENT 缺参数 → failure ✓")
+
 
 class TestExecutorNewTabDetection:
     """CLICK 新标签页检测测试 —— 验证 _execute_CLICK 能检测到 popup 事件打开的标签页。"""

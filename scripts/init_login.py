@@ -8,7 +8,7 @@
 功能：
     1. 启动 Playwright Chromium（有头模式）
     2. 使用 user_data_dir 持久化登录态
-    3. 自动打开百度、京东、知乎、豆瓣主页面，方便用户登录
+    3. 自动打开百度、淘宝、京东、知乎、豆瓣主页面，方便用户登录
     4. 登录完成后关闭浏览器标签页或按 Ctrl+C 退出
     5. 所有 cookies/localStorage 自动保存到 user_data_dir
 """
@@ -22,6 +22,7 @@ from playwright.sync_api import sync_playwright
 # Agent 已登录（可优先使用）的网站列表
 LOGIN_SITES = [
     ("百度", "https://www.baidu.com"),
+    ("淘宝", "https://www.taobao.com"),
     ("京东", "https://www.jd.com"),
     ("知乎", "https://www.zhihu.com"),
     ("豆瓣", "https://www.douban.com"),

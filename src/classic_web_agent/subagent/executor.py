@@ -329,6 +329,14 @@ class Executor:
                 message=f"导航失败 ({self._consecutive_goto_failures}/{self._max_goto_retries}): {e}",
             )
 
+    def _execute_REFRESH(self, action: Action) -> ActionResult:
+        """刷新当前页面。"""
+        try:
+            self.browser.reload()
+            return ActionResult(success=True, message="页面已刷新")
+        except Exception as e:
+            return ActionResult(success=False, message=f"刷新失败: {e}")
+
     def _execute_GO_BACK(self, action: Action) -> ActionResult:
         self.browser.go_back()
         return ActionResult(success=True, message="后退")
@@ -393,6 +401,46 @@ class Executor:
             success=False,
             message=f"未找到文本 '{text}'",
             data={"found": False},
+        )
+
+    def _execute_GET_ELEMENT(self, action: Action) -> ActionResult:
+        """查找视口内所有包含指定文本的可见元素，返回 DOM 信息 + 坐标。
+
+        与 FIND 不同，此动作不滚动页面，而是返回所有匹配元素的结构化信息，
+        供 VLM 决策是否使用 MOUSE_CLICK 坐标点击。
+        """
+        extra = action.extra or {}
+        text = extra.get("text", "")
+        if not text:
+            return ActionResult(success=False, message="GET_ELEMENT 缺少 text")
+        exact = bool(extra.get("exact", False))
+
+        elements = self.browser.find_elements_by_text(text, exact=exact)
+        if not elements:
+            return ActionResult(
+                success=False,
+                message=f"未找到包含 '{text}' 的元素",
+                data=[],
+            )
+
+        import json
+        lines = []
+        for el in elements:
+            attr = f"<{el['tag']}"
+            if el['id']:
+                attr += f"#{el['id']}"
+            if el['classes']:
+                attr += "." + ".".join(el['classes'])
+            text_short = el['text']
+            attr += f"> {json.dumps(text_short, ensure_ascii=False)}"
+            attr += f" @({el['x']},{el['y']},{el['w']},{el['h']})"
+            lines.append(attr)
+
+        result_text = "\n".join(lines)
+        return ActionResult(
+            success=True,
+            message=f"找到 {len(elements)} 个包含 '{text}' 的元素",
+            data=result_text,
         )
 
     # ── 辅助方法 ─────────────────────────────────────────────────────

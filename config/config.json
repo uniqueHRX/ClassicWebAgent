@@ -3,14 +3,18 @@
     "model": "deepseek-v4-flash",
     "base_url": "",
     "api_key": "",
-    "temperature": 0.1
+    "temperature": 0.3,
+    "timeout": 180
   },
   "subagent": {
     "model": "mimo-v2.5",
     "base_url": "",
     "api_key": "",
     "temperature": 0.1,
-    "confidence_threshold": 0.9
+    "confidence_threshold": 0.8,
+    "timeout": 60,
+    "max_steps": 20,
+    "max_retries": 3
   },
 
   "headless": true,

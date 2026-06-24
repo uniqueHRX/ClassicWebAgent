@@ -85,8 +85,10 @@ def create_agent(config: dict[str, Any]) -> Agent:
     agent = Agent(config)
 
     # LLM/VLM 客户端
-    agent.llm = LLMClient(mode="llm")
-    agent.vlm = LLMClient(mode="vlm")
+    agent_cfg = config.get("agent", {})
+    subagent_cfg = config.get("subagent", {})
+    agent.llm = LLMClient(mode="llm", timeout=agent_cfg.get("timeout", 180))
+    agent.vlm = LLMClient(mode="vlm", timeout=subagent_cfg.get("timeout", 180))
 
     # 浏览器（支持持久化 user_data_dir）
     user_data_dir = config.get("user_data_dir", "") or None

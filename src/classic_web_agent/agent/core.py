@@ -203,8 +203,7 @@ class Agent:
             )
         elif report_format == "html":
             html_report = director.report(task, task_plan, all_results, "html")
-            logger.info("[Agent] 报告已生成 (html, %d 字符):\n%s",
-                         len(html_report), html_report)
+            logger.info("[Agent] 报告已生成 (html, %d 字符)", len(html_report))
             result = TaskResult(
                 success=True,
                 summary=html_report,
@@ -213,8 +212,7 @@ class Agent:
             )
         else:
             md_report = director.report(task, task_plan, all_results, "md")
-            logger.info("[Agent] 报告已生成 (md, %d 字符):\n%s",
-                         len(md_report), md_report)
+            logger.info("[Agent] 报告已生成 (md, %d 字符)", len(md_report))
             result = TaskResult(
                 success=True,
                 summary=md_report,

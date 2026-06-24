@@ -6,13 +6,10 @@ from classic_web_agent.main import create_agent
 from classic_web_agent.agent.core import Agent
 from classic_web_agent.common.action import ActionType
 from classic_web_agent.common.types import (
-    PageState,
     Action,
     ActionResult,
     MemoryEntry,
-    AgentStep,
-    Plan,
-    PlanStep,
+    PageState,
     TaskResult,
 )
 
@@ -35,7 +32,7 @@ class TestAgentFramework:
         logger.info("Agent 创建成功 ✓")
 
     def test_action_type_values(self):
-        """验证 21 个动作类型枚举。"""
+        """验证 23 个动作类型枚举。"""
         assert ActionType.CLICK.name == "CLICK"
         assert ActionType.TYPE.name == "TYPE"
         assert ActionType.HOVER.name == "HOVER"
@@ -46,19 +43,21 @@ class TestAgentFramework:
         assert ActionType.GOTO.name == "GOTO"
         assert ActionType.GO_BACK.name == "GO_BACK"
         assert ActionType.GO_FORWARD.name == "GO_FORWARD"
+        assert ActionType.REFRESH.name == "REFRESH"
         assert ActionType.NEW_TAB.name == "NEW_TAB"
         assert ActionType.CLOSE_TAB.name == "CLOSE_TAB"
         assert ActionType.SWITCH_TAB.name == "SWITCH_TAB"
         assert ActionType.SCREENSHOT.name == "SCREENSHOT"
         assert ActionType.EXTRACT.name == "EXTRACT"
         assert ActionType.FIND.name == "FIND"
+        assert ActionType.GET_ELEMENT.name == "GET_ELEMENT"
         assert ActionType.THINK.name == "THINK"
         assert ActionType.REMEMBER.name == "REMEMBER"
         assert ActionType.RECALL.name == "RECALL"
         assert ActionType.DONE.name == "DONE"
         assert ActionType.FAIL.name == "FAIL"
-        assert len(ActionType) == 21
-        logger.info("21 个动作类型验证通过 ✓")
+        assert len(ActionType) == 23
+        logger.info("23 个动作类型验证通过 ✓")
 
     def test_page_state_defaults(self):
         """PageState 所有字段应有合理的默认值。"""
@@ -77,16 +76,6 @@ class TestAgentFramework:
         assert action.text is None
         assert action.confidence == 1.0
         logger.info("Action 默认值验证通过 ✓")
-
-    def test_plan_defaults(self):
-        """Plan 和 PlanStep 的默认值。"""
-        plan = Plan()
-        assert plan.steps == []
-        assert plan.current_step is None
-
-        step = PlanStep(id=0, goal="测试")
-        assert step.status == "pending"
-        logger.info("Plan/PlanStep 默认值验证通过 ✓")
 
     def test_task_result(self):
         """TaskResult 包含完整的执行摘要。"""

@@ -33,6 +33,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "base_url": "https://opencode.ai/zen/go/v1",
         "api_key": "",
         "temperature": 0.1,
+        "timeout": 180,
     },
     "subagent": {
         "model": "mimo-v2.5",
@@ -40,6 +41,9 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "api_key": "",
         "temperature": 0.1,
         "confidence_threshold": 0.9,
+        "timeout": 60,
+        "max_steps": 20,
+        "max_retries": 3,
     },
 }
 
