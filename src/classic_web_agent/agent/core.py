@@ -129,6 +129,28 @@ class Agent:
             logger.info("[Agent] SubAgent 返回 (%d 字符):\n%s",
                          len(observations), observations)
 
+            # 保存子任务完成状态到 sub_tasks.json
+            if self.logger and self.logger.run_dir:
+                try:
+                    import json as _json
+                    status_path = self.logger.run_dir / "sub_tasks.json"
+                    status_entry = {
+                        "id": round_num,
+                        "goal": completed_goal,
+                        "status": sub.current_status["status"] if sub.current_status else "unknown",
+                        "summary": sub.current_status.get("summary", "") if sub.current_status else "",
+                    }
+                    all_status = []
+                    if status_path.exists():
+                        all_status = _json.loads(status_path.read_text(encoding="utf-8"))
+                    all_status.append(status_entry)
+                    status_path.write_text(
+                        _json.dumps(all_status, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except Exception as e:
+                    logger.warning("保存子任务状态失败: %s", e)
+
             # 标记失败
             if "[FAIL]" in observations:
                 logger.warning("[Agent] 子任务可能失败: %s", completed_goal)
