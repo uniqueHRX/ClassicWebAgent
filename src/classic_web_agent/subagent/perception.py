@@ -6,12 +6,15 @@
 - 5 步流程：截图 → CDP 采集 → 构建增强 DOM Tree → 序列化 → PageState
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from classic_web_agent.llm import LLMClient
 from classic_web_agent.browser import Browser
 from classic_web_agent.common.types import PageState
+
+logger = logging.getLogger(__name__)
 
 
 # ── 内部数据结构 ──────────────────────────────────────────────────────────────
@@ -109,30 +112,63 @@ def _build_snapshot_lookup(
 ) -> dict[int, dict]:
     """构建 backendNodeId → 布局数据的快速查询字典。
 
-    DOMSnapshot.captureSnapshot() 返回结构较复杂：
+    DOMSnapshot.captureSnapshot() 返回结构如下：
         {
-            "strings": [...],
+            "strings": ["str0", "str1", ...],
             "documents": [{
-                "documentURL": 0,
+                "documentURL": 0,  # index into strings
+                "nodes": {
+                    "parentIndex": [0, 1, 2, ...],
+                    "nodeType": [1, 3, 1, ...],
+                    "nodeName": [0, 1, 0, ...],   # string index
+                    "nodeValue": [2, 3, ...],     # string index
+                    "backendNodeId": [11, 22, 33, ...],
+                    ...
+                },
                 "layout": {
-                    "nodeIndex": [0, 1, 2, ...],
-                    "bounds": [[x,y,w,h], ...],
+                    "nodeIndex": [0, 2, 0, 3, ...],  # index into nodes
+                    "bounds": [[x1,y1,w1,h1], [x2,y2,w2,h2], ...],
                     ...
                 },
                 ...
             }]
         }
 
-    简化方案（阶段一）：暂不返回 bounds 数据，留待阶段二完善。
-    返回空字典，序列化时不输出坐标 @()。
+    layout.nodeIndex[i] 指向 nodes 数组中的索引，layout.bounds[i] 为该节点的坐标。
+    构建 backend_node_id → {x, y, width, height} 的映射字典。
     """
-    # 阶段一暂不实现 Snapshot 解析
-    return {}
-    # TODO: 阶段二实现完整 Snapshot 解析
-    # strings = snapshot_result.get("strings", [])
-    # for doc in snapshot_result.get("documents", []):
-    #     layout = doc.get("layout", {})
-    #     ... (需要对照 DOM tree 的 nodeIndex → backendNodeId 映射)
+    lookup: dict[int, dict] = {}
+    if not snapshot_result:
+        return lookup
+
+    strings = snapshot_result.get("strings", [])
+    documents = snapshot_result.get("documents", [])
+    if not documents:
+        return lookup
+
+    doc = documents[0]
+    nodes = doc.get("nodes", {})
+    layout = doc.get("layout", {})
+
+    backend_ids: list[int] = nodes.get("backendNodeId", [])
+    node_indices: list[int] = layout.get("nodeIndex", [])
+    bounds_list: list[list[float]] = layout.get("bounds", [])
+
+    # 构建 layout.nodeIndex → backendNodeId 的映射
+    for i, node_idx in enumerate(node_indices):
+        if i >= len(bounds_list):
+            break
+        if node_idx < len(backend_ids):
+            bid = backend_ids[node_idx]
+            if bid == 0:
+                continue
+            b = bounds_list[i]
+            if len(b) >= 4:
+                lookup[bid] = {
+                    "bounds": [b[0], b[1], b[2], b[3]],
+                }
+
+    return lookup
 
 
 # ── 可见性判定 ────────────────────────────────────────────────────────────────
@@ -427,6 +463,67 @@ def _serialize(node: EnhancedDOMNode, depth: int = 0) -> str:
     return ""
 
 
+# ── SoM 标注数据收集 ──────────────────────────────────────────────────────────────
+
+
+def _collect_som_elements(
+    node: EnhancedDOMNode,
+    scroll_x: int = 0,
+    scroll_y: int = 0,
+    viewport_w: int = 0,
+    viewport_h: int = 0,
+) -> list[dict]:
+    """递归收集增强树中适合 SoM 标注的元素（位于视口内且有坐标）。
+
+    收集条件：
+        1. 元素节点（node_type == 1）
+        2. 可交互（is_interactive）
+        3. 未隐藏（is_hidden == False）
+        4. 有有效的布局坐标（bounds 非 None）
+        5. 调整滚动后位于视口内
+
+    Args:
+        scroll_x, scroll_y: 当前页面滚动偏移，用于将文档坐标转为视口坐标。
+        viewport_w, viewport_h: 视口尺寸，用于过滤视口外的元素。
+
+    Returns:
+        list[dict]: 每个元素包含 {backend_node_id, tag_name, x, y, width, height}。
+    """
+    results: list[dict] = []
+
+    if node.node_type == 1 and node.is_interactive and not node.is_hidden and node.bounds is not None:
+        b = node.bounds
+        # 过滤最小尺寸（小于 5px 的不标注，避免噪音）
+        if b.width > 5 and b.height > 5:
+            # 文档坐标 → 视口坐标（减去滚动偏移）
+            vp_x = int(b.x) - scroll_x
+            vp_y = int(b.y) - scroll_y
+            vp_w = int(b.width)
+            vp_h = int(b.height)
+
+            # 完全在视口外（任何方向都不可见）的元素跳过
+            if not (vp_x + vp_w > 0 and vp_y + vp_h > 0):
+                pass  # 跳过
+            elif viewport_w > 0 and (vp_x >= viewport_w or vp_y >= viewport_h):
+                pass  # 完全在视口右/下方，跳过
+            else:
+                results.append({
+                    "backend_node_id": node.backend_node_id,
+                    "tag_name": node.tag_name,
+                    "x": max(0, vp_x),
+                    "y": max(0, vp_y),
+                    "width": vp_w,
+                    "height": vp_h,
+                })
+
+    for child in node.children:
+        results.extend(_collect_som_elements(
+            child, scroll_x, scroll_y, viewport_w, viewport_h,
+        ))
+
+    return results
+
+
 # ── 主类 ──────────────────────────────────────────────────────────────────────
 
 
@@ -451,8 +548,9 @@ class Perception:
             1. 截图（browser.screenshot → data URI）
             2. CDP 三流并行采集
             3. 构建增强 DOM Tree
-            4. 遍历 + 序列化 → tree_text
-            5. 组装 PageState
+            4. SoM 标注 → 在截图叠加编号标签（可配置开关）
+            5. 遍历 + 序列化 → tree_text
+            6. 组装 PageState
 
         Returns:
             PageState 对象。浏览器未启动或页面异常时返回安全的空 PageState。
@@ -492,16 +590,75 @@ class Perception:
         except Exception:
             snapshot_result = {"documents": []}
 
-        # ── 步骤 3 & 4: 构建增强树 + 序列化 ──
+        # ── 步骤 3: 构建增强树 ──
         try:
             ax_lookup = _build_ax_lookup(ax_result)
             snapshot_lookup = _build_snapshot_lookup(snapshot_result)
             root = _build_enhanced_tree(
                 dom_result["root"], ax_lookup, snapshot_lookup,
             )
-            tree_text = _serialize(root)
         except Exception as e:
             logger.warning("[Perception] DOM 树构建失败: %s", e)
+            root = None
+
+        # ── 步骤 4: SoM 标注 ──（仅在 enhanched tree 构建成功时）
+        if root is not None and screenshot:
+            try:
+                # 获取当前滚动偏移、视口尺寸和 DPR
+                scroll_x = 0
+                scroll_y = 0
+                viewport_w = 0
+                viewport_h = 0
+                dpr = 1.0
+                try:
+                    page_data = page.evaluate(
+                        "() => ({x: window.pageXOffset, y: window.pageYOffset, "
+                        "w: document.documentElement.clientWidth, "
+                        "h: document.documentElement.clientHeight, "
+                        "dpr: window.devicePixelRatio})"
+                    )
+                    scroll_x = int(page_data.get("x", 0))
+                    scroll_y = int(page_data.get("y", 0))
+                    viewport_w = int(page_data.get("w", 0))
+                    viewport_h = int(page_data.get("h", 0))
+                    dpr = float(page_data.get("dpr", 1.0))
+                except Exception:
+                    pass
+
+                elements = _collect_som_elements(
+                    root,
+                    scroll_x=scroll_x,
+                    scroll_y=scroll_y,
+                    viewport_w=viewport_w,
+                    viewport_h=viewport_h,
+                )
+                if elements and dpr != 1.0:
+                    # scale="css" 确保截图尺寸与 CSS 像素一致，
+                    # 但在有头模式下 Playwright 可能仍输出物理像素。
+                    # 通过 DPR 缩放坐标，确保标注与截图元素对齐。
+                    for el in elements:
+                        el["x"] = int(el["x"] * dpr)
+                        el["y"] = int(el["y"] * dpr)
+                        el["width"] = int(el["width"] * dpr)
+                        el["height"] = int(el["height"] * dpr)
+                if elements:
+                    from classic_web_agent.subagent.som import annotate_screenshot
+                    annotated = annotate_screenshot(screenshot, elements)
+                    if annotated != screenshot:
+                        logger.info(
+                            "[Perception] SoM 标注 %d 个元素 "
+                            "(scroll=%d,%d dpr=%.1f)",
+                            len(elements), scroll_x, scroll_y, dpr,
+                        )
+                        screenshot = annotated
+            except Exception as e:
+                logger.warning("[Perception] SoM 标注失败: %s", e)
+
+        # ── 步骤 5: 序列化 → tree_text ──
+        try:
+            tree_text = _serialize(root) if root is not None else ""
+        except Exception as e:
+            logger.warning("[Perception] 序列化失败: %s", e)
             tree_text = ""
 
         # ── 标签页信息 ──
