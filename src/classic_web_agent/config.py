@@ -26,6 +26,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "headless": False,
     "log_trace": False,
     "log_level": "INFO",
+    "report_format": "md",
     "agent": {
         "model": "deepseek-v4-flash",
         "base_url": "https://opencode.ai/zen/go/v1",

@@ -112,7 +112,9 @@ class TaskResult:
     """任务执行最终结果。"""
 
     success: bool = True
-    summary: str = ""
+    summary: str = ""          # 向后兼容，等于当前 report_format 对应的报告
+    md_report: str = ""        # Markdown 格式报告
+    html_report: str = ""      # HTML 格式报告
     total_steps: int = 0
 
 

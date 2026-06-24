@@ -27,6 +27,8 @@ def mock_browser() -> MagicMock:
     """Mock 的 Browser 实例。"""
     br = MagicMock()
     br._browser = MagicMock()  # _check_browser_ready() 通过
+    br.tab_count = 1  # 模拟 1 个标签页
+    br.active_index = 0  # 当前为第 0 个标签页
     return br
 
 
@@ -290,6 +292,85 @@ class TestExecutorWithMockBrowser:
         assert result.data == "页面内容测试"
         mock_browser.extract_text.assert_called_once()
         logger.info("EXTRACT → result.data ✓")
+
+
+class TestExecutorNewTabDetection:
+    """CLICK 新标签页检测测试 —— 验证 _execute_CLICK 能检测到 popup 事件打开的标签页。"""
+
+    def test_click_normal_no_new_tab(self) -> None:
+        """CLICK 未打开新标签页，返回常规消息。"""
+        br = MagicMock()
+        br._browser = MagicMock()
+        br.tab_count = 1
+        br.active_index = 0
+        br.click.side_effect = lambda e: None  # 点击后无变化
+
+        executor = Executor(ActionSpace(), browser=br)
+        action = Action(action_type="CLICK", element_id=5)
+        result = executor.execute(action)
+
+        assert result.success is True
+        assert result.message == "点击元素 5"
+        br.click.assert_called_once_with(5)
+        logger.info("CLICK 无新标签页: message=%s", result.message)
+
+    def test_click_new_tab_detected(self) -> None:
+        """CLICK 打开新标签页（tab_count 增加），返回消息包含自动切换提示。"""
+        br = MagicMock()
+        br._browser = MagicMock()
+        br.tab_count = 1
+        br.active_index = 0
+
+        def _click_opens_new_tab(elem_id: int) -> None:
+            """模拟 popup 监听器：点击后新标签页被添加到 _pages。"""
+            br.tab_count = 2
+            br.active_index = 1
+
+        br.click.side_effect = _click_opens_new_tab
+
+        executor = Executor(ActionSpace(), browser=br)
+        action = Action(action_type="CLICK", element_id=100)
+        result = executor.execute(action)
+
+        assert result.success is True
+        assert "新标签页" in result.message
+        assert "自动切换" in result.message
+        assert "tab_1" in result.message
+        br.click.assert_called_once_with(100)
+        logger.info("CLICK 新标签页: message=%s", result.message)
+
+    def test_click_multiple_new_tabs(self) -> None:
+        """连续 CLICK 多次打开新标签页，每次都能正确检测。"""
+        br = MagicMock()
+        br._browser = MagicMock()
+        br.tab_count = 1
+        br.active_index = 0
+
+        call_count = [0]
+
+        def _click_sequential(elem_id: int) -> None:
+            call_count[0] += 1
+            br.tab_count = 1 + call_count[0]
+            br.active_index = call_count[0]
+
+        br.click.side_effect = _click_sequential
+
+        executor = Executor(ActionSpace(), browser=br)
+
+        # 第一次点击 → tab_1
+        r1 = executor.execute(Action(action_type="CLICK", element_id=10))
+        assert r1.success is True
+        assert "新标签页" in r1.message
+        assert "tab_1" in r1.message
+
+        # 第二次点击 → tab_2
+        r2 = executor.execute(Action(action_type="CLICK", element_id=20))
+        assert r2.success is True
+        assert "新标签页" in r2.message
+        assert "tab_2" in r2.message
+
+        assert br.click.call_count == 2
+        logger.info("连续 2 次新标签页 CLICK 均正确检测")
 
 
 # ══════════════════════════════════════════════════════════════════════════

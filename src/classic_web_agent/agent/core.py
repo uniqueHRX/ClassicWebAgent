@@ -163,16 +163,42 @@ class Agent:
         logger.info("[Agent] 阶段3: Director.report() — 报告生成")
         all_results = "\n\n---\n\n".join(all_observations)
         logger.info("[Agent] 汇总 %d 个子任务结果 (%d 字符)",
-                     len(all_observations), len(all_results))
+                      len(all_observations), len(all_results))
 
-        report = director.report(task, task_plan, all_results)
-        logger.info("[Agent] 报告已生成 (%d 字符):\n%s", len(report), report)
+        report_format = self.config.get("report_format", "md")
 
-        result = TaskResult(
-            success=True,
-            summary=report,
-            total_steps=len(all_observations),
-        )
+        if report_format == "both":
+            md_report = director.report(task, task_plan, all_results, "md")
+            html_report = director.report(task, task_plan, all_results, "html")
+            logger.info("[Agent] 报告已生成 (both: md=%d 字符, html=%d 字符)",
+                         len(md_report), len(html_report))
+            result = TaskResult(
+                success=True,
+                summary=md_report,
+                md_report=md_report,
+                html_report=html_report,
+                total_steps=len(all_observations),
+            )
+        elif report_format == "html":
+            html_report = director.report(task, task_plan, all_results, "html")
+            logger.info("[Agent] 报告已生成 (html, %d 字符):\n%s",
+                         len(html_report), html_report)
+            result = TaskResult(
+                success=True,
+                summary=html_report,
+                html_report=html_report,
+                total_steps=len(all_observations),
+            )
+        else:
+            md_report = director.report(task, task_plan, all_results, "md")
+            logger.info("[Agent] 报告已生成 (md, %d 字符):\n%s",
+                         len(md_report), md_report)
+            result = TaskResult(
+                success=True,
+                summary=md_report,
+                md_report=md_report,
+                total_steps=len(all_observations),
+            )
         logger.info("[Agent] 任务完成，共 %d 个子任务", result.total_steps)
         self.logger.end_task(result)
         return result

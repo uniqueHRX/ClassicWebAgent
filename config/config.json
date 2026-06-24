@@ -14,5 +14,6 @@
   },
   "headless": false,
   "log_trace": true,
-  "log_level": "INFO"
+  "log_level": "INFO",
+  "report_format": "both"
 }

@@ -183,6 +183,7 @@ system:
 
 user:
   initial: |
+    当前日期时间：{current_date}
     用户任务：{task}
 
     请基于你的世界知识，将这个任务拓展为详实的任务计划书（task_plan），
@@ -191,6 +192,7 @@ user:
     并给出第一个要执行的子任务。
 
   progress: |
+    当前日期时间：{current_date}
     SubAgent 执行结果：
     执行的子任务：「{completed_goal}」
     {observations}

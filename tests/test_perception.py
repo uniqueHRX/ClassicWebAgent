@@ -21,6 +21,7 @@ from classic_web_agent.subagent.perception import (
     _is_hidden,
     _is_interactive,
     _serialize,
+    _build_enhanced_tree,
 )
 from classic_web_agent.common.types import PageState
 
@@ -86,6 +87,121 @@ class TestHiddenDetection:
         )
         assert _is_hidden(node) is True
         logger.info("零宽零高隐藏判定通过 ✓")
+
+
+class TestHiddenPropagation:
+    """隐藏传递机制测试 —— _build_enhanced_tree() 的 parent_hidden 传播。"""
+
+    @staticmethod
+    def _make_el(
+        tag: str,
+        attrs: list[str] | None = None,
+        children: list[dict] | None = None,
+        backend_id: int = 0,
+    ) -> dict:
+        """构造简化 CDP DOM 节点（仅含 _build_enhanced_tree 需要的字段）。"""
+        node: dict = {
+            "nodeId": backend_id,
+            "backendNodeId": backend_id,
+            "nodeType": 1,
+            "nodeName": tag.upper(),
+            "nodeValue": "",
+            "attributes": attrs or [],
+            "children": children or [],
+        }
+        return node
+
+    def test_parent_display_none_hides_children(self) -> None:
+        """父元素 display:none → 子元素自动隐藏。"""
+        child = self._make_el("button", attrs=["id", "btn"], backend_id=2)
+        parent = self._make_el(
+            "div",
+            attrs=["style", "display: none", "class", "hide"],
+            children=[child],
+            backend_id=1,
+        )
+        tree = _build_enhanced_tree(parent, {}, {})
+        assert tree.is_hidden is True, "父元素应隐藏"
+        assert len(tree.children) == 1
+        assert tree.children[0].is_hidden is True, "子元素应继承父元素隐藏"
+        assert tree.children[0].is_interactive is False, "隐藏元素不应可交互"
+        logger.info("parent display:none → child hidden ✓")
+
+    def test_parent_visibility_hidden_hides_children(self) -> None:
+        """父元素 visibility:hidden → 子元素自动隐藏。"""
+        child = self._make_el("a", attrs=["href", "/"], backend_id=2)
+        parent = self._make_el(
+            "div",
+            attrs=["style", "visibility: hidden"],
+            children=[child],
+            backend_id=1,
+        )
+        tree = _build_enhanced_tree(parent, {}, {})
+        assert tree.is_hidden is True
+        assert tree.children[0].is_hidden is True
+        assert tree.children[0].is_interactive is False
+        logger.info("parent visibility:hidden → child hidden ✓")
+
+    def test_nested_multi_level_hidden(self) -> None:
+        """三级嵌套隐藏：祖父 hidden → 父 hidden → 子 hidden。"""
+        leaf = self._make_el("input", attrs=["type", "text"], backend_id=3)
+        parent = self._make_el("div", children=[leaf], backend_id=2)
+        grandparent = self._make_el(
+            "div",
+            attrs=["class", "hidden"],
+            children=[parent],
+            backend_id=1,
+        )
+        tree = _build_enhanced_tree(grandparent, {}, {})
+        assert tree.is_hidden is True
+        assert tree.children[0].is_hidden is True
+        assert tree.children[0].children[0].is_hidden is True
+        assert tree.children[0].children[0].is_interactive is False
+        logger.info("三级嵌套隐藏继承 ✓")
+
+    def test_visible_parent_visible_child(self) -> None:
+        """父元素可见 → 子元素正常检测可见性。"""
+        child = self._make_el(
+            "button",
+            attrs=["id", "btn"],
+            backend_id=2,
+        )
+        parent = self._make_el("div", children=[child], backend_id=1)
+        tree = _build_enhanced_tree(parent, {}, {})
+        # 父元素无隐藏属性，不应被隐藏
+        assert tree.is_hidden is False
+        # 子元素 button 应可交互且可见
+        assert tree.children[0].is_hidden is False
+        assert tree.children[0].is_interactive is True
+        logger.info("可见父元素 → 子元素正常可见 ✓")
+
+    def test_mixed_visibility_siblings(self) -> None:
+        """同级元素：一个隐藏父元素中的按钮 + 一个可见的按钮。"""
+        hidden_child = self._make_el("button", attrs=["id", "h-btn"], backend_id=3)
+        hidden_parent = self._make_el(
+            "div",
+            attrs=["style", "display: none"],
+            children=[hidden_child],
+            backend_id=2,
+        )
+        visible_child = self._make_el("button", attrs=["id", "v-btn"], backend_id=5)
+
+        root = self._make_el(
+            "div",
+            children=[hidden_parent, visible_child],
+            backend_id=1,
+        )
+        tree = _build_enhanced_tree(root, {}, {})
+        # 根节点可见
+        assert tree.is_hidden is False
+        # 两个子节点
+        assert len(tree.children) == 2
+        # 第一个子节点（父元素隐藏）→ 隐藏
+        assert tree.children[0].is_hidden is True
+        # 第二个子节点（可见的 button）→ 可见且可交互
+        assert tree.children[1].is_hidden is False
+        assert tree.children[1].is_interactive is True
+        logger.info("混合可见性同级元素 ✓")
 
 
 class TestInteractiveDetection:
