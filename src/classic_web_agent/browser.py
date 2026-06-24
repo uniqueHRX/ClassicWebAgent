@@ -28,6 +28,7 @@ executor.py 负责 Action → Browser 原子操作的映射编排。
 import base64
 import io
 import logging
+from pathlib import Path
 from typing import Any
 
 from PIL import Image
@@ -98,14 +99,18 @@ class Browser:
         browser.close()
     """
 
-    def __init__(self, headless: bool = True) -> None:
+    def __init__(self, headless: bool = True,
+                 user_data_dir: str | None = None) -> None:
         """初始化浏览器管理器（此时未启动 Playwright）。
 
         Args:
             headless: 是否无头模式。True 为无头（默认，适合 CI/脚本）；
                        False 为有头（开发调试时可观察浏览器操作）。
+            user_data_dir: Chrome 用户数据目录路径（持久化 cookies/localStorage）。
+                          为 None 时不使用持久化配置。
         """
         self.headless = headless
+        self.user_data_dir = user_data_dir
 
         self._pw: PW_Playwright | None = None
         self._browser: PW_Browser | None = None
@@ -116,13 +121,22 @@ class Browser:
 
     # ── 生命周期 ────────────────────────────────────────────────────────
 
+    def _apply_stealth(self, page: PW_Page) -> None:
+        """对页面应用 playwright-stealth 反检测补丁。"""
+        try:
+            from playwright_stealth import Stealth
+            Stealth().apply_stealth_sync(page)
+            logger.debug("Stealth 补丁已应用到页面")
+        except Exception:
+            logger.debug("Stealth 补丁应用失败")
+
     def launch(self) -> None:
         """启动 Chromium 浏览器并创建默认页面（和 CDP session）。
 
         具体流程：
             1. 启动 Playwright 驱动进程
             2. launch Chromium（headless/s headless 取决于构造参数）
-            3. 创建默认 BrowserContext
+            3. 创建默认 BrowserContext（如果配置了 user_data_dir 则用持久化模式）
             4. 创建默认 Page 并注册 popup 事件监听 + 对话框监听
             5. 为 Page 创建 CDP session
 
@@ -134,18 +148,46 @@ class Browser:
             return
 
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=self.headless)
-        self._context = self._browser.new_context()
-        page = self._context.new_page()
-        self._register_popup_listener(page)
-        self._pages = [page]
+
+        if self.user_data_dir:
+            # 持久化模式：launch_persistent_context 自动管理 profile
+            profile_path = Path(self.user_data_dir).resolve()
+            profile_path.mkdir(parents=True, exist_ok=True)
+            self._context = self._pw.chromium.launch_persistent_context(
+                user_data_dir=str(profile_path),
+                headless=self.headless,
+                args=[
+                    "--start-maximized",
+                    "--disable-blink-features=AutomationControlled"
+                ] if not self.headless
+                else [
+                    "--disable-blink-features=AutomationControlled"
+                ],
+            )
+            # persistent_context 自带 browser 和 pages
+            self._browser = self._context.browser
+            pages = self._context.pages
+            page = pages[0] if pages else self._context.new_page()
+            self._pages = [page]
+            logger.info(
+                "浏览器已启动（持久化模式）headless=%s profile=%s",
+                self.headless, profile_path,
+            )
+        else:
+            self._browser = self._pw.chromium.launch(headless=self.headless)
+            self._context = self._browser.new_context()
+            page = self._context.new_page()
+            self._pages = [page]
+            logger.info(
+                "浏览器已启动 headless=%s",
+                self.headless,
+            )
+
         self._active_index = 0
-        cdp = self._create_cdp_session(page)
+        self._register_popup_listener(page)
+        self._create_cdp_session(page)
         self._register_dialog_handler(page)
-        logger.info(
-            "浏览器已启动 headless=%s",
-            self.headless,
-        )
+        self._apply_stealth(page)
 
     def close(self) -> None:
         """关闭浏览器，清理所有资源。
@@ -252,6 +294,7 @@ class Browser:
             try:
                 self._create_cdp_session(popup)
                 self._register_dialog_handler(popup)
+                self._apply_stealth(popup)
             except Exception:
                 logger.warning("为新标签页创建 CDP session 失败", exc_info=True)
         self._active_index = len(self._pages) - 1

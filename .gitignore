@@ -1,6 +1,8 @@
 .agent/
 .tmp/
 .vscode/
+.appdata/
+chrome_profile/
 __pycache__/
 plans/
 log/
