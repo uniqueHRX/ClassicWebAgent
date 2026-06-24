@@ -144,10 +144,22 @@ def main() -> None:
         logger.info("总子任务数: %d", result.total_steps)
 
         # 7. 保存报告
-        if result.summary:
-            report_path = agent_logger.save_report(result.summary, args.task)
-            if report_path:
-                logger.info("报告已保存: %s", report_path)
+        report_format = config.get("report_format", "md")
+
+        if report_format == "both":
+            if result.md_report:
+                md_path = agent_logger.save_report(result.md_report, args.task, "md")
+                if md_path:
+                    logger.info("报告已保存 (MD): %s", md_path)
+            if result.html_report:
+                html_path = agent_logger.save_report(result.html_report, args.task, "html")
+                if html_path:
+                    logger.info("报告已保存 (HTML): %s", html_path)
+        else:
+            if result.summary:
+                report_path = agent_logger.save_report(result.summary, args.task, report_format)
+                if report_path:
+                    logger.info("报告已保存: %s", report_path)
     except Exception as e:
         logger.exception("任务执行异常: %s", e)
         result = None
@@ -168,9 +180,15 @@ def main() -> None:
     # 9. 输出结果摘要
     if result:
         status_icon = "✅" if result.success else "❌"
+        report_format = config.get("report_format", "md")
         print(f"\n{status_icon} 任务{'完成' if result.success else '失败'}")
         print(f"   子任务数: {result.total_steps}")
-        print(f"   报告文件: {run_dir / 'report.md'}")
+        if report_format == "both":
+            print(f"   报告文件 (MD):   {run_dir / 'report.md'}")
+            print(f"   报告文件 (HTML): {run_dir / 'report.html'}")
+        else:
+            report_ext = "html" if report_format == "html" else "md"
+            print(f"   报告文件: {run_dir / f'report.{report_ext}'}")
     else:
         print("\n❌ 任务异常终止")
         print(f"   日志文件: {run_dir / 'run.log'}")

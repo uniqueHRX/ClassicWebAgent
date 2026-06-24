@@ -48,29 +48,47 @@ class Logger:
         status = "完成" if result.success else "失败"
         print(f"[Agent] 任务{status}: {result.summary} (共 {result.total_steps} 步)")
 
-    def save_report(self, report: str, task: str) -> Path | None:
-        """将最终报告保存为 report.md。
+    def save_report(self, report: str, task: str, report_format: str = "md") -> Path | None:
+        """将最终报告保存为文件。
 
         Args:
             report: 报告文本。
             task: 原始任务描述。
+            report_format: 报告格式（"md" 或 "html"）。
 
         Returns:
-            report.md 的路径，无 run_dir 时返回 None。
+            报告文件路径，无 run_dir 时返回 None。
         """
         if not self.run_dir:
             return None
 
-        content = (
-            f"# Agent 运行报告\n\n"
-            f"- **任务**: {task}\n"
-            f"- **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"- **状态**: {'✅ 成功' if report.strip() else '❌ 失败'}\n"
-            f"- **步骤数**: {len(self.steps)}\n\n"
-            f"---\n\n"
-            f"{report}"
-        )
-        report_path = self.run_dir / "report.md"
+        if report_format == "html":
+            # HTML 格式：直接写 LLM 输出的完整 HTML 文档
+            # 安全网：剥离可能出现的 ```html / ``` 包裹
+            content = report.strip()
+            if content.startswith("```html"):
+                content = content[len("```html"):].strip()
+            elif content.startswith("```"):
+                first_nl = content.find("\n")
+                if first_nl != -1:
+                    content = content[first_nl:].strip()
+            if content.endswith("```"):
+                content = content[:-3].strip()
+            ext = "html"
+        else:
+            # MD 格式：包装标题头
+            content = (
+                f"# Agent 运行报告\n\n"
+                f"- **任务**: {task}\n"
+                f"- **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"- **状态**: {'✅ 成功' if report.strip() else '❌ 失败'}\n"
+                f"- **步骤数**: {len(self.steps)}\n\n"
+                f"---\n\n"
+                f"{report}"
+            )
+            ext = "md"
+
+        report_path = self.run_dir / f"report.{ext}"
         report_path.write_text(content, encoding="utf-8")
         print(f"[Logger] 报告已保存: {report_path}")
         return report_path

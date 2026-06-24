@@ -185,21 +185,30 @@ class Director:
 
         return output
 
-    def report(self, task: str, task_plan: str, all_results: str) -> str:
+    def report(
+        self,
+        task: str,
+        task_plan: str,
+        all_results: str,
+        report_format: str = "md",
+    ) -> str:
         """阶段3：生成最终报告。
 
         Args:
             task: 用户原始任务描述。
             task_plan: 任务计划书（plan 阶段生成）。
             all_results: 所有 SubAgent 观察结果的汇总文本。
+            report_format: 报告格式，"md"（Markdown 文档）或 "html"（网页报告）。
 
         Returns:
-            str: 最终报告（自然语言文本）。
+            str: 最终报告文本（MD 或 HTML）。
         """
+        fmt = report_format if report_format in ("md", "html") else "md"
+
         if not self._reporter_prompt:
             self._load_prompts()
 
-        system = self._render_reporter_system()
+        system = self._render_reporter_system(fmt)
         user = self._render_user_template(
             template_key="default",
             prompt_data=self._reporter_prompt,
@@ -208,8 +217,15 @@ class Director:
             all_results=all_results,
         )
 
-        # 报告生成不需要 JSON 格式
-        raw = self._call_llm(system=system, user=user, response_format=None)
+        # 构建完整上下文：reporter system + 历史对话（Director 分解/审查全过程）+ 报告指令
+        # 这样 LLM 能看到任务的完整上下文，而不仅仅是最终的 all_results 文本
+        msgs: list[dict[str, str]] = [{"role": "system", "content": system}]
+        if self._messages:
+            # 跳过 self._messages[0]（旧的 director system），保留 plan/review 对话历史
+            msgs.extend(self._messages[1:])
+        msgs.append({"role": "user", "content": user})
+
+        raw = self._call_llm(system="", user="", response_format=None, messages=msgs)
         return raw.strip()
 
     # ── 内部方法 ─────────────────────────────────────────────────
@@ -233,9 +249,15 @@ class Director:
         system_data = self._director_prompt.get("system", {})
         return self._render_system_block(system_data)
 
-    def _render_reporter_system(self) -> str:
-        """将 reporter.yaml 的 system 节渲染为纯文本。"""
+    def _render_reporter_system(self, fmt: str = "md") -> str:
+        """将 reporter.yaml 的 system 节渲染为纯文本。
+
+        Args:
+            fmt: 报告格式，"md" 或 "html"。
+        """
         system_data = self._reporter_prompt.get("system", {})
+        if isinstance(system_data, dict) and fmt in system_data:
+            system_data = system_data[fmt]
         return self._render_system_block(system_data)
 
     def _render_system_block(self, system_data: dict[str, Any]) -> str:
