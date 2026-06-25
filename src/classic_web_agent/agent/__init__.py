@@ -1,19 +1,19 @@
-"""Agent 核心模块。"""
+"""Agent 主代理模块。"""
 
 from classic_web_agent.agent.core import Agent
-from classic_web_agent.agent.types import (
-    PageState,
+from classic_web_agent.common.types import (
     Action,
     ActionResult,
     MemoryEntry,
-    AgentStep,
+    PageState,
+    TaskResult,
 )
 
 __all__ = [
     "Agent",
-    "PageState",
     "Action",
     "ActionResult",
     "MemoryEntry",
-    "AgentStep",
+    "PageState",
+    "TaskResult",
 ]

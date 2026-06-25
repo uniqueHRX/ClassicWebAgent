@@ -1,6 +1,12 @@
 .agent/
 .tmp/
 .vscode/
+.appdata/
+chrome_profile/
+cloak_profile/
 __pycache__/
+plans/
+log/
 
 .env
+.env.test
