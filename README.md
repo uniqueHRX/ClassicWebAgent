@@ -4,7 +4,25 @@
 
 ---
 
-## 前置要求
+## 目录
+
+- [安装部署](#安装部署)
+- [配置文件](#配置文件)
+- [登录浏览器](#登录浏览器持久化登录态)
+- [运行任务](#运行任务)
+  - [运行单个任务](#运行单个任务)
+  - [运行批量测试](#运行批量测试)
+  - [评测结果](#评测结果)
+- [项目结构](#项目结构)
+- [架构说明](#架构说明)
+- [动作空间](#动作空间)
+- [常见问题](#常见问题)
+
+---
+
+## 安装部署
+
+### 前置要求
 
 | 依赖 | 版本要求 |
 |------|---------|
@@ -12,14 +30,10 @@
 | Poetry | ≥ 2.0 |
 | Playwright 浏览器 | Chromium |
 
----
-
-## 安装
-
 ### 1. 克隆项目
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/uniqueHRX/ClassicWebAgent.git
 cd ClassicWebAgent
 ```
 
@@ -29,13 +43,16 @@ cd ClassicWebAgent
 poetry install
 ```
 
-此命令会安装 [`pyproject.toml`](pyproject.toml) 中声明的所有依赖：
+核心依赖包括：
 
-- `openai` — OpenAI 兼容 API 客户端（LLM/VLM 调用）
-- `playwright` — 浏览器自动化驱动
-- `pillow` — 截图编码（PNG optimize）
-- `python-dotenv` — 环境变量加载
-- `pyyaml` — 提示词模板加载
+| 包 | 用途 |
+|-----|------|
+| `openai` | OpenAI 兼容 API 客户端（LLM/VLM 调用） |
+| `playwright` | 浏览器自动化驱动 |
+| `pillow` | 截图编码（PNG optimize） |
+| `python-dotenv` | 环境变量加载 |
+| `pyyaml` | 提示词模板加载 |
+| `playwright-stealth` | 反检测补丁（仅 Playwright 引擎） |
 
 ### 3. 安装 Playwright 浏览器
 
@@ -43,77 +60,48 @@ poetry install
 poetry run playwright install chromium
 ```
 
-### 4. 可选：安装 CloakBrowser 反检测浏览器
+### 4. 可选：CloakBrowser 反检测浏览器（替代 Playwright）
 
-如果目标网站有严格的反爬/反机器人检测（如 Cloudflare Turnstile、reCAPTCHA v3），可以安装 CloakBrowser——一个 C++ 源码级反检测 Chromium 二进制，58 个源码补丁覆盖 WebGL/Canvas/Audio/WebRTC 等指纹：
+如果目标网站有严格的反爬/反机器人检测（如 Cloudflare Turnstile、reCAPTCHA v3），提供 C++ 源码级反检测 Chromium，58 个源码补丁覆盖 WebGL/Canvas/Audio/WebRTC 等指纹：
 
 ```bash
 poetry install --with cloak
 ```
 
-首次运行时会自动下载 CloakBrowser 二进制（~200MB，有进度显示）。安装后在 [`config.json`](config/config.json) 中开启：
+首次运行自动下载 CloakBrowser 二进制（~200MB）。配置方式见[配置文件](#配置文件)。
 
-```json
-{
-  "browser_engine": "cloakbrowser",
-  "cloakbrowser": {
-    "humanize": false,
-    "geoip": false
-  }
-}
-```
-
-| cloakbrowser 配置 | 说明 |
-|-------------------|------|
-| `humanize: true` | 模拟人类操作：贝塞尔曲线鼠标移动、逐字符输入、真实滚动模式 |
-| `geoip: true` | 自动从代理 IP 匹配时区和语言（需安装 `pip install cloakbrowser[geoip]`） |
-
----
-
-## 配置
-
-### 1. 创建环境变量文件
+### 5. 配置 API 密钥
 
 ```bash
 cp .env.example .env
 ```
 
-### 2. 编辑 `.env` 填入 API 密钥
+编辑 `.env`：
 
 ```env
-LLM_API_KEY = "your_api_key_here"
-LLM_BASE_URL = "your_openai_compatible_api_base_url_here"
+LLM_API_KEY = "your_api_key"
+LLM_BASE_URL = "your_openai_compatible_api_base_url"
 LLM_MODEL_NAME = "deepseek-v4-flash"
 
-VLM_API_KEY = "your_api_key_here"
-VLM_BASE_URL = "your_openai_compatible_api_base_url_here"
+VLM_API_KEY = "your_api_key"
+VLM_BASE_URL = "your_openai_compatible_api_base_url"
 VLM_MODEL_NAME = "mimo-v2.5"
 ```
 
-- **LLM**：用于高层规划、任务分解、报告生成（文本模型）
-- **VLM**：用于视觉感知、页面理解、动作规划（视觉语言模型）
-- `*_BASE_URL` 支持任何 OpenAI 兼容 API（如 OpenAI、Azure、本地 vLLM 等）
+| 变量 | 说明 |
+|------|------|
+| `LLM_*` | 高层规划、任务分解、报告生成（文本模型） |
+| `VLM_*` | 视觉感知、页面理解、动作规划（视觉语言模型） |
+| `*_BASE_URL` | 支持任何 OpenAI 兼容 API（OpenAI/Azure/本地 vLLM 等） |
 
-### 3. 可选：编辑 Agent 配置
+---
+
+## 配置文件
 
 编辑 [`config/config.json`](config/config.json) 调整运行参数：
 
 ```json
 {
-  "log_trace": true,
-  "log_level": "INFO",
-  "report_format": "both",
-  "browser_engine": "playwright",
-  "playwright": {
-    "headless": false,
-    "user_data_dir": "./chrome_profile"
-  },
-  "cloakbrowser": {
-    "headless": false,
-    "user_data_dir": "./cloak_profile",
-    "humanize": false,
-    "geoip": false
-  },
   "agent": {
     "model": "deepseek-v4-flash",
     "temperature": 0.1,
@@ -126,60 +114,181 @@ VLM_MODEL_NAME = "mimo-v2.5"
     "timeout": 60,
     "max_steps": 20,
     "max_retries": 3
-  }
+  },
+  "browser_engine": "playwright",
+  "playwright": {
+    "headless": false,
+    "user_data_dir": "./chrome_profile"
+  },
+  "cloakbrowser": {
+    "headless": false,
+    "user_data_dir": "./cloak_profile",
+    "humanize": false,
+    "geoip": false
+  },
+  "log_trace": true,
+  "report_format": "both"
 }
 ```
 
+### 配置项说明
+
 | 配置项 | 说明 |
 |--------|------|
-| `log_trace` | 是否保存每次观察的截图和 DOM 树到 `trace/` |
-| `log_level` | 日志级别（DEBUG / INFO / WARNING / ERROR） |
-| `report_format` | 报告格式：`"md"` / `"html"` / `"both"` |
-| `browser_engine` | 浏览器引擎：`"playwright"`（默认） / `"cloakbrowser"` |
+| `agent.*` | LLM 模型参数（model / temperature / timeout） |
+| `subagent.model` | VLM 模型名称 |
+| `subagent.confidence_threshold` | VLM 动作置信度阈值（低于此值触发重试，默认 0.9） |
+| `subagent.max_steps` | 每个子任务的最大操作步数（默认 20） |
+| `subagent.max_retries` | VLM 低置信度最大重试次数（默认 3，超限自动 FAIL） |
+| `subagent.timeout` | VLM API 请求超时秒数（默认 60） |
+| `browser_engine` | 浏览器引擎：`"playwright"`（默认）或 `"cloakbrowser"` |
 | `playwright.*` | Playwright 引擎配置（headless / user_data_dir） |
 | `cloakbrowser.*` | CloakBrowser 引擎配置（headless / user_data_dir / humanize / geoip） |
-| `agent.*` | LLM 模型参数 |
-| `subagent.*` | VLM 模型参数 |
-| `subagent.confidence_threshold` | VLM 动作置信度阈值（低于此值重试） |
-| `subagent.max_steps` | 子任务最大操作步数 |
-| `subagent.max_retries` | VLM 低置信度最大重试次数 |
+| `log_trace` | 是否保存每次观察的截图和 DOM 树到 `trace/` |
+| `report_format` | 报告格式：`"md"` / `"html"` / `"both"` |
 
-**配置优先级**：`config.json` 中的值会覆盖代码默认值，环境变量（`LLM_*` / `VLM_*`）会覆盖 `config.json`。
+**配置优先级**：代码默认值 < `config.json` < 环境变量（`LLM_*` / `VLM_*`）
 
 ---
 
-## 运行
+## 登录浏览器（持久化登录态）
 
-### 方式 1：python -m（推荐）
+对于需要登录的网站（京东、知乎等），先运行登录初始化脚本。脚本会自动读取配置文件中的 `browser_engine` 和对应的 `user_data_dir`：
 
 ```bash
-python -m classic_web_agent --task "帮我调研AI领域热门研究方向"
+python scripts/init_login.py
 ```
 
-### 方式 2：poetry run
+脚本会打开以下网站（有头模式），在每个标签页中完成手动登录：
+
+- 百度（https://www.baidu.com）
+- 京东（https://www.jd.com）
+- 知乎（https://www.zhihu.com）
+- 豆瓣（https://www.douban.com）
+
+登录完成后关闭浏览器窗口，cookies/localStorage 自动保存到配置的 `user_data_dir` 目录。此后 Agent 运行时自动复用此登录态。
+
+也可手动指定 profile 目录：
 
 ```bash
-poetry run classic-web-agent --task "收集广州未来15天天气预报"
+python scripts/init_login.py --profile ./my_profile
 ```
 
-### 方式 3：辅助脚本
+---
+
+## 运行任务
+
+### 运行单个任务
 
 ```bash
-python scripts/run.py -t "搜索网络新闻，为我详细梳理一下世界杯小组赛挪威对阵塞内加尔的赛况，并给出赛后分析"
+# 方式 1：python -m（推荐）
+python -m classic_web_agent --task "京东上卖得最好的机械键盘是哪款"
+
+# 方式 2：poetry run
+poetry run classic-web-agent --task "今天北京的天气怎么样"
+
+# 方式 3：辅助脚本（自动加载 .env）
+python scripts/run.py -t "帮我对比一下 iPhone 16 在京东和天猫的价格"
 ```
 
 ### 运行产出
 
-每次运行会在 `log/` 下创建独立目录：
+每次运行在 `log/` 下创建独立目录：
 
 ```
 log/
-└── 2026-06-23-0001/
-    ├── run.log         # 完整运行日志
-    ├── report.md       # 最终报告（LLM 生成的总结）
-    └── trace/          # 轨迹记录（当 log_trace=true）
+└── 2026-06-25-NNNN/
+    ├── run.log              # 完整运行日志
+    ├── report.md            # Markdown 格式报告
+    ├── report.html          # HTML 格式报告（report_format 为 html/both 时）
+    ├── sub_tasks.json       # 子任务完成状态
+    └── trace/               # 轨迹记录（log_trace=true 时）
         ├── 0001_1_HHMMSSfff.png   # 每次观察的截图
         └── 0001_1_HHMMSSfff.txt   # 同时间戳的 DOM 树
+```
+
+### 运行批量测试
+
+批量运行 [`scripts/test-cases.yaml`](scripts/test-cases.yaml) 中定义的所有测例：
+
+```bash
+# 运行全部 10 个测例
+python scripts/run_test_cases.py
+
+# 运行指定测例（按编号）
+python scripts/run_test_cases.py --id 1
+
+# 运行指定测例（按编号，支持多个）
+python scripts/run_test_cases.py --id 1,3,5
+```
+
+测例覆盖天气查询、票价查询、商品比价、体育赛事调研、热搜获取、商品推荐、技术调研等场景，每个测例包含任务描述和评分标准。
+
+---
+
+## 评测结果
+
+### 评分工具
+
+对运行结果进行自动评分，基于 LLM 评估任务完成度和信息质量：
+
+```bash
+# 评估指定日期的指定序号范围
+python scripts/evaluate.py --date 2026-06-25 --range 1-10
+
+# 评估单个运行
+python scripts/evaluate.py --date 2026-06-25 --id 0015
+
+# 跨日期评估（多个日期的同序号段）
+python scripts/evaluate.py --range 1-10
+
+# 全量评估（log/ 下所有运行）
+python scripts/evaluate.py
+
+# 仅结构化分析，不调用 LLM 评分
+python scripts/evaluate.py --no-llm
+
+# 自定义输出路径
+python scripts/evaluate.py --date 2026-06-25 --range 1-10 --output results/my_eval.json
+```
+
+### 评分维度
+
+| 维度 | 权重 | 说明 |
+|------|------|------|
+| 任务完成度 | 50% | LLM 按 `eval_criteria` 逐项评估报告覆盖了多少用户要求 |
+| 信息质量 | 30% | 数据准确性(40%) + 信息具体性(30%) + 来源可信度(30%) |
+| 子任务完成率 | 20% | `sub_tasks.json` 中 `status=completed` 的比例 |
+
+**总分公式**：`主任务成功(0/1) × (完成度×50% + 信息质量×30% + 子任务完成率×20%)`
+
+### 评估依赖
+
+- 需要 `.env` 中配置 **LLM** API KEY（`LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL_NAME`）
+- 评估使用 LLM（文本模型），而非 VLM（视觉模型）
+- `--no-llm` 模式不需要 API，但返回 0 分
+
+### 输出格式
+
+```json
+{
+  "test_cases": [
+    {
+      "id": 1,
+      "task": "今天北京天气怎么样",
+      "score": 92.8,
+      "task_fulfillment": 95.0,
+      "info_quality": 84.5,
+      "sub_tasks": { "total": 2, "completed": 2, "failed": 0 }
+    }
+  ],
+  "summary": {
+    "total": 10,
+    "avg_score": 87.7,
+    "avg_task_fulfillment": 94.6,
+    "avg_info_quality": 86.4
+  }
+}
 ```
 
 ---
@@ -189,99 +298,195 @@ log/
 ```
 ClassicWebAgent/
 ├── src/classic_web_agent/
+│   ├── __init__.py, __main__.py
+│   ├── main.py                    # CLI 入口（argparse）
+│   ├── config.py                  # 配置管理（.env + config.json 深度合并）
+│   ├── llm.py                     # OpenAI 兼容 API 客户端（LLM/VLM 双模式）
+│   ├── logger.py                  # 日志记录 + 报告/截图保存
+│   ├── browser.py                 # Playwright/CloakBrowser 驱动 + 原子操作
+│   ├── skills.py                  # Skill 注册（预留）
+│   │
+│   ├── common/
+│   │   ├── types.py               # 数据模型：Action/PageState/MemoryEntry/TodoItem...
+│   │   ├── memory.py              # 三层记忆管理器（observations + working + knowledge）
+│   │   └── action.py              # 23 个动作类型枚举 + ActionSpace 校验
+│   │
 │   ├── agent/                     # LLM 主代理
-│   │   ├── core.py                # Agent 主循环（Director + SubAgent 编排）
-│   │   ├── director.py            # Director：plan/review/report 三阶段
+│   │   ├── core.py                # Agent 主循环（plan → review → report 三阶段）
+│   │   ├── director.py            # LLM 编排器：plan/review/report + prompt 渲染
 │   │   └── prompts/
-│   │       ├── director.yaml       # LLM 任务分解提示词
-│   │       └── reporter.yaml       # LLM 报告生成提示词
-│   ├── subagent/                  # VLM 子代理
-│   │   ├── core.py                # SubAgent 自治执行循环
-│   │   ├── planner.py             # VLM 动作规划（看图+DOM→动作序列）
-│   │   ├── executor.py            # 21 个动作 → Playwright 操作
-│   │   ├── perception.py          # CDP 页面感知 + 增强 DOM 树
-│   │   ├── verifier.py            # 动作效果验证（stub）
-│   │   └── prompts/
-│   │       └── planner.yaml        # VLM 动作规划提示词
-│   ├── common/                    # 共享模块
-│   │   ├── types.py               # 所有数据模型
-│   │   ├── memory.py              # 三层记忆管理器
-│   │   └── action.py              # ActionType 枚举 + ActionSpace
-│   ├── browser.py                 # Playwright 浏览器驱动
-│   ├── llm.py                     # LLM/VLM API 客户端
-│   ├── logger.py                  # 日志 + 报告 + 轨迹保存
-│   ├── config.py                  # 配置加载（.env + config.json）
-│   └── main.py                    # CLI 入口 + 运行目录管理
+│   │       ├── director.yaml      # LLM 任务分解提示词
+│   │       └── reporter.yaml      # LLM 报告生成提示词（支持 MD/HTML 双格式）
+│   │
+│   └── subagent/                  # VLM 子代理
+│       ├── core.py                # SubAgent 子任务自治执行循环
+│       ├── planner.py             # VLM 动作规划（看图+DOM → 动作序列）
+│       ├── executor.py            # 23 个动作的执行器
+│       ├── perception.py          # 页面感知（CDP 三流采集 + SoM 标注）
+│       ├── som.py                 # Set-of-Mark 截图标注
+│       ├── verifier.py            # 动作效果验证（stub）
+│       └── prompts/
+│           └── planner.yaml       # VLM 动作规划提示词
+│
 ├── config/
-│   └── config.json                # 运行时配置
+│   └── config.json                # 运行配置
+│
 ├── scripts/
-│   └── run.py                     # 开发辅助脚本
-├── tests/                         # 测试
-├── docs/                          # 设计文档
-├── log/                           # 运行产出
-├── pyproject.toml
-└── README.md
+│   ├── run.py                     # 便捷运行（自动加载 .env）
+│   ├── run_test_cases.py          # 批量测试运行
+│   ├── evaluate.py                # 评测评分工具
+│   ├── init_login.py              # 浏览器登录初始化
+│   └── test-cases.yaml            # 端到端测例定义
+│
+├── tests/                         # pytest 单元/集成测试
+│   ├── conftest.py
+│   ├── test_browser.py            # 浏览器集成测试
+│   ├── test_executor.py           # 执行器单元/集成测试
+│   ├── test_planner.py            # 规划器单元/集成测试
+│   ├── test_perception.py         # 感知模块 + SoM 测试
+│   ├── test_director.py           # Director 测试
+│   ├── test_llm.py                # LLM 客户端测试
+│   └── ...
+│
+├── plans/                         # 设计方案归档
+├── log/                           # 运行日志（自动创建）
+└── chrome_profile/                # Playwright 登录态（自动创建）
 ```
 
 ---
 
-## 架构概览
+## 架构说明
+
+### 双层 Agent 架构
 
 ```
-用户任务（一句话）
-  │
-  ▼
-Agent.run(task)                     ← agent/core.py
-  │
-  ├── Director.plan(task)           ← LLM 调用1: 基于世界知识生成任务计划书
-  │     → task_plan + todo_list + first_sub_task
-  │
-  ├── for each sub_task:
-  │     ├── SubAgent.run(sub_task)  ← VLM 自治执行
-  │     │     ├── Perception.observe()
-  │     │     ├── Planner.plan()
-  │     │     └── Executor.execute()
-  │     │     → observations
-  │     │
-  │     └── Director.review(obs)    ← LLM 调用2..N: 审查进展
-  │           → 更新 todo_list + next_sub_task
-  │
-  └── Director.report()             ← LLM 调用N+1: 对照计划书生成报告
-        → TaskResult(summary=报告)
+用户任务 → LLM (Director) → 子任务清单 → VLM (SubAgent) → 浏览器操作
+                            │                              │
+                    逐个子任务执行 ← observations 返回参与
+                                            │
+                                     LLM 汇总生成报告
+```
+
+- **LLM 层**（`agent/`）：战略级决策者。将用户任务分解为子任务清单，逐项派发给 VLM，收到结果后汇总生成报告。
+- **VLM 层**（`subagent/`）：战术级执行者。自治执行单个子任务（ReAct 循环：观察→规划→执行→验证），返回 observations。
+
+### Agent 三阶段执行流程
+
+```
+阶段1: plan()
+  LLM 将用户任务分解为子任务清单 + 详细任务计划书
+           │
+阶段2: review() 循环
+  for each 子任务:
+    SubAgent.run() → observations  ← VLM 自治执行（最多 max_steps 步）
+    LLM 审查结果 → 更新 todo_list → 下一个子任务 / 完成
+           │
+阶段3: report()
+  LLM 对照任务计划书和所有 observations 生成最终报告
+  （支持 Markdown / HTML 双格式）
+```
+
+### VLM 单步循环（SubAgent ReAct）
+
+```
+每步循环（最多 max_steps 步）:
+  1. 观察（Perception.observe()）
+     ├── 截图（page.screenshot → PNG optimize）
+     ├── CDP 三流采集（DOM + AX + Snapshot）
+     ├── 构建增强 DOM 树
+     ├── 收集 SoM 可交互元素坐标
+     ├── 序列化 DOM 树
+     └── SoM 标注截图（包围框 + 编号徽章）
+  2. 规划（Planner.plan()）
+     └── VLM 看图 + DOM 树 → 动作序列（1-4 个动作）
+  3. 执行（Executor.execute()）
+     └── 逐个执行动作，记录结构化 working memory
+  4. 重复直到 DONE/FAIL
 ```
 
 ---
 
-## 技术栈
+## 动作空间
 
-| 组件 | 技术 |
-|------|------|
-| 语言 | Python ≥ 3.11 |
-| 浏览器驱动 | Playwright (Chromium) |
-| 模型接口 | OpenAI 兼容 API（LLM + VLM 双模型） |
-| 页面感知 | CDP (Chrome DevTools Protocol) 三流采集 |
-| 构建系统 | Poetry |
+系统定义了 23 个原子动作（18 个外部 + 5 个内部）：
+
+| 分类 | 动作 | 参数 | 说明 |
+|------|------|------|------|
+| **元素交互** | `CLICK` | `element_id` | 点击 SoM 编号元素 |
+| | `MOUSE_CLICK` | `x`, `y` | 坐标点击（Canvas/SoM 盲区 fallback） |
+| | `TYPE` | `element_id`, `text` | 输入文本（自动清空原内容） |
+| | `HOVER` | `element_id` | 悬停（展开下拉菜单） |
+| **页面操作** | `SCROLL` | `direction` | 滚动（up/down） |
+| | `PRESS` | `key` | 按键（Enter/Escape 等） |
+| | `WAIT` | `condition` | 显式等待（load/domcontentloaded/networkidle） |
+| **导航** | `GOTO` | `url` | 页面跳转 |
+| | `GO_BACK` | — | 后退 |
+| | `GO_FORWARD` | — | 前进 |
+| | `REFRESH` | — | 刷新页面 |
+| **标签页** | `NEW_TAB` | `url` | 新建标签页 |
+| | `CLOSE_TAB` | — | 关闭当前标签页 |
+| | `SWITCH_TAB` | `tab_index` | 切换标签页 |
+| **信息获取** | `SCREENSHOT` | — | 主动截图 |
+| | `EXTRACT` | `element_id` | 提取文本 |
+| | `FIND` | `text` | 页内搜索并滚动定位 |
+| | `GET_ELEMENT` | `text` | 查找未标记元素的文本+坐标 |
+| **内部动作** | `THINK` | `text` | 记录推理过程 |
+| | `REMEMBER` | `key`, `value` | 存储关键信息到记忆 |
+| | `RECALL` | `query` | 从记忆检索信息 |
+| | `DONE` | `text` | 子任务完成 |
+| | `FAIL` | `text` | 子任务失败 |
+
+### 动作设计亮点
+
+- **GET_ELEMENT**：查找 SoM 未标记的交互元素（如动态菜单项），返回 `<tag>"文本" @(x,y,w,h)` 格式的坐标信息，配合 `MOUSE_CLICK` 使用
+- **REFRESH**：刷新页面清除弹窗/加载异常，刷新后建议配合 `WAIT`
+- 所有动作通过 `Action` dataclass 统一传递参数，新增动作不改变数据结构
 
 ---
 
-## 开发阶段
+## 常见问题
 
-| 阶段 | 状态 | 内容 |
-|------|------|------|
-| **阶段一** | ✅ | Infrastructure：Browser、LLMClient、Perception、Executor、Memory、ActionSpace |
-| **阶段二** | ✅ | VLM SubAgent：Planner（planner.yaml 提示词 + confidence 机制） |
-| **阶段三** | ✅ | LLM Director：任务分解 + 子任务调度 + 报告生成（director.yaml + reporter.yaml） |
-| **阶段四** | 🏗️ 进行中 | 完整双层架构：运行目录系统、配置管理、trace 记录 |
-| **阶段五** | ⏳ 远期 | 多 VLM 并行、Skill 库、自愈机制 |
+### Q: 浏览器启动后提示版本不兼容？
 
----
+Playwright 引擎和 CloakBrowser 引擎的 Chrome profile **互不兼容**。切换引擎时请使用不同的 `user_data_dir`：
 
-## 文档
+```json
+{
+  "browser_engine": "playwright",
+  "playwright": { "user_data_dir": "./chrome_profile" },
+  "cloakbrowser": { "user_data_dir": "./cloak_profile" }
+}
+```
 
-| 文档 | 说明 |
-|------|------|
-| [设计方案](docs/design.md) | 项目主设计文档（数据流、模块依赖、配置说明） |
-| [架构概览](docs/architecture.md) | 用户向快速入门 |
-| [模型调度方案](docs/model-routing.md) | LLM/VLM 双层协作细节 |
-| [感知模块设计](docs/perception-design.md) | CDP 增强 DOM + 元素定位 |
-| [动作空间设计](docs/action-space.md) | 21 动作类型定义 |
+### Q: VLM 频繁输出低置信度动作？
+
+调整 `subagent.confidence_threshold` 降低阈值，或增加 `subagent.max_retries`：
+
+```json
+{
+  "subagent": {
+    "confidence_threshold": 0.7,
+    "max_retries": 5
+  }
+}
+```
+
+### Q: 部分网页出现反爬/机器人检测？
+
+1. 确保 `browser_engine` 为 `"playwright"` 时已安装 playwright-stealth（默认已安装）
+2. 切换到 CloakBrowser：安装 `poetry install --with cloak` 后设置 `"browser_engine": "cloakbrowser"`
+3. 启用 `humanize: true` 模拟人类操作
+
+### Q: 报告太长导致 LLM 调用超时？
+
+增大 `agent.timeout`：
+
+```json
+{
+  "agent": { "timeout": 300 }
+}
+```
+
+### Q: 如何查看感知模块的中间输出？
+
+设置 `log_trace: true`，每次观察的截图和 DOM 树会保存到 `trace/` 目录中，截图文件为 SoM 标注后的版本。
