@@ -194,14 +194,14 @@ LLM 通过持久对话上下文维护状态。每次 `SubAgent.run()` 返回的 
 |------|---------|------|
 | [`common/types.py`](../src/classic_web_agent/common/types.py) | 数据模型：PageState/Action/ActionResult/MemoryEntry/TodoItem/DirectorOutput... | 一 |
 | [`common/memory.py`](../src/classic_web_agent/common/memory.py) | 三层记忆：observations + working + knowledge(预留) | 一 |
-| [`common/action.py`](../src/classic_web_agent/common/action.py) | ActionType 枚举（21 个动作）+ ActionSpace 校验/去重 | 一 |
+| [`common/action.py`](../src/classic_web_agent/common/action.py) | ActionType 枚举（23 个动作）+ ActionSpace 校验/去重 | 一 |
 | [`agent/core.py`](../src/classic_web_agent/agent/core.py) | Agent 主循环：plan() → review() 循环 → report() | 三 |
 | [`agent/director.py`](../src/classic_web_agent/agent/director.py) | LLM 编排器：加载 prompt → 调用 LLM → 解析 JSON | 三 |
 | [`agent/prompts/director.yaml`](../src/classic_web_agent/agent/prompts/director.yaml) | LLM 系统提示词：任务分解 + 子任务调度 | 三 |
 | [`agent/prompts/reporter.yaml`](../src/classic_web_agent/agent/prompts/reporter.yaml) | LLM 系统提示词：最终报告生成 | 三 |
 | [`subagent/core.py`](../src/classic_web_agent/subagent/core.py) | SubAgent：VLM 子任务自治执行循环 | 二 |
 | [`subagent/planner.py`](../src/classic_web_agent/subagent/planner.py) | VLM 动作规划：加载 planner.yaml → 看图+DOM → Action 列表 | 二 |
-| [`subagent/executor.py`](../src/classic_web_agent/subagent/executor.py) | Action → Playwright 原子操作（21 个动作路由） | 一 |
+| [`subagent/executor.py`](../src/classic_web_agent/subagent/executor.py) | Action → Playwright 原子操作（23 个动作路由） | 一 |
 | [`subagent/perception.py`](../src/classic_web_agent/subagent/perception.py) | CDP 三流采集 + EnhancedDOMTree + 序列化 → PageState | 一/二 |
 | [`subagent/verifier.py`](../src/classic_web_agent/subagent/verifier.py) | 动作效果验证（stub，待实现） | 二 |
 | [`subagent/prompts/planner.yaml`](../src/classic_web_agent/subagent/prompts/planner.yaml) | VLM 系统提示词：动作规划 | 二 |
@@ -231,26 +231,38 @@ LLM 通过持久对话上下文维护状态。每次 `SubAgent.run()` 返回的 
 
 ```json
 {
-  "log_screenshot": false,
   "agent": {
     "model": "deepseek-v4-flash",
-    "base_url": "...",
-    "api_key": "",
-    "temperature": 0.1
+    "temperature": 0.1,
+    "timeout": 180
   },
   "subagent": {
     "model": "mimo-v2.5",
-    "base_url": "...",
-    "api_key": "",
     "temperature": 0.1,
-    "confidence_threshold": 0.9
-  }
+    "confidence_threshold": 0.9,
+    "timeout": 60,
+    "max_steps": 20,
+    "max_retries": 3
+  },
+  "browser_engine": "playwright",
+  "playwright": {
+    "headless": false,
+    "user_data_dir": "./chrome_profile"
+  },
+  "cloakbrowser": {
+    "headless": false,
+    "user_data_dir": "./cloak_profile",
+    "humanize": false,
+    "geoip": false
+  },
+  "log_trace": true,
+  "report_format": "both"
 }
 ```
 
 **优先级**：默认值 < `config.json` < 环境变量（`LLM_*` / `VLM_*`）。
 
-**配置传递链**：`config.json` → `config.load_config()` → `main.create_agent()` → `Agent(config)` → `SubAgent(subagent_config)` → `Planner(confidence_threshold)`。
+**配置传递链**：`config.json` → `config.load_config()` → `main.create_agent()` → `Agent(config)` → `SubAgent(subagent_config)` → `Planner(confidence_threshold, max_retries)`。
 
 ### 7.2 `pyproject.toml` 关键配置
 

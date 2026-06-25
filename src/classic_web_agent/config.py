@@ -23,11 +23,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # ── 默认配置 ────────────────────────────────────────────────────
 
 _DEFAULT_CONFIG: dict[str, Any] = {
-    "headless": False,
     "log_trace": False,
     "log_level": "INFO",
     "report_format": "md",
-    "user_data_dir": "",
+    "browser_engine": "playwright",  # "playwright" | "cloakbrowser"
     "agent": {
         "model": "deepseek-v4-flash",
         "base_url": "https://opencode.ai/zen/go/v1",
@@ -44,6 +43,16 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "timeout": 60,
         "max_steps": 20,
         "max_retries": 3,
+    },
+    "playwright": {
+        "headless": False,
+        "user_data_dir": "",
+    },
+    "cloakbrowser": {
+        "headless": False,
+        "user_data_dir": "",
+        "humanize": False,
+        "geoip": False,
     },
 }
 

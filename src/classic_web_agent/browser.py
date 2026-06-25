@@ -100,7 +100,9 @@ class Browser:
     """
 
     def __init__(self, headless: bool = True,
-                 user_data_dir: str | None = None) -> None:
+                 user_data_dir: str | None = None,
+                 browser_engine: str = "playwright",
+                 cloak_config: dict | None = None) -> None:
         """初始化浏览器管理器（此时未启动 Playwright）。
 
         Args:
@@ -108,9 +110,13 @@ class Browser:
                        False 为有头（开发调试时可观察浏览器操作）。
             user_data_dir: Chrome 用户数据目录路径（持久化 cookies/localStorage）。
                           为 None 时不使用持久化配置。
+            browser_engine: 浏览器引擎。"playwright"（默认）| "cloakbrowser"。
+            cloak_config: CloakBrowser 配置（humanize, geoip 等）。
         """
         self.headless = headless
         self.user_data_dir = user_data_dir
+        self._browser_engine = browser_engine
+        self._cloak_config = cloak_config or {}
 
         self._pw: PW_Playwright | None = None
         self._browser: PW_Browser | None = None
@@ -140,22 +146,22 @@ class Browser:
             logger.debug("Stealth 挂载失败（忽略）")
 
     def launch(self) -> None:
-        """启动 Chromium 浏览器并创建默认页面（和 CDP session）。
+        """启动浏览器，根据 _browser_engine 选择引擎。
 
-        具体流程：
-            1. 启动 Playwright 驱动进程
-            2. launch Chromium（headless/s headless 取决于构造参数）
-            3. 创建默认 BrowserContext（如果配置了 user_data_dir 则用持久化模式）
-            4. 创建默认 Page 并注册 popup 事件监听 + 对话框监听
-            5. 为 Page 创建 CDP session
-
-        注意：launch 后立即可以调用 goto/click/screenshot 等方法。
-        重复调用 launch 会被安全忽略（日志中产生一个 warning）。
+        - "playwright"：标准 Playwright Chromium + playwright-stealth
+        - "cloakbrowser"：CloakBrowser C++ 源码级反检测 Chromium（跳过 JS 注入类 stealth）
         """
         if self._browser is not None:
             logger.warning("浏览器已在运行，忽略重复 launch")
             return
 
+        if self._browser_engine == "cloakbrowser":
+            self._launch_cloakbrowser()
+        else:
+            self._launch_playwright()
+
+    def _launch_playwright(self) -> None:
+        """标准 Playwright Chromium 启动路径（含 playwright-stealth 反检测）。"""
         self._pw = sync_playwright().start()
 
         # 统一 context 配置（模拟中国用户环境）
@@ -180,7 +186,6 @@ class Browser:
             _browser_args.append("--start-maximized")
 
         if self.user_data_dir:
-            # 持久化模式：launch_persistent_context 自动管理 profile
             profile_path = Path(self.user_data_dir).resolve()
             profile_path.mkdir(parents=True, exist_ok=True)
             self._context = self._pw.chromium.launch_persistent_context(
@@ -189,7 +194,6 @@ class Browser:
                 args=_browser_args,
                 **_context_config,
             )
-            # persistent_context 自带 browser 和 pages
             self._browser = self._context.browser
             pages = self._context.pages
             page = pages[0] if pages else self._context.new_page()
@@ -206,15 +210,52 @@ class Browser:
             page = self._context.new_page()
             self._pages = [page]
             logger.info(
-                "浏览器已启动 headless=%s",
-                self.headless,
+                "浏览器已启动 headless=%s", self.headless,
             )
 
         self._active_index = 0
         self._register_popup_listener(page)
         self._create_cdp_session(page)
-        self._register_dialog_handler(page)
         self._apply_stealth()
+
+    def _launch_cloakbrowser(self) -> None:
+        """CloakBrowser 启动路径。
+
+        CloakBrowser 的 launch() 返回标准 Playwright Browser 对象，
+        因此所有后续 CDP 操作（DOM.resolveNode、DOMSnapshot.captureSnapshot 等）完全兼容。
+        """
+        from cloakbrowser import launch as cloak_launch
+        from cloakbrowser import launch_persistent_context as cloak_persistent
+
+        cloak_kwargs = dict(
+            headless=self.headless,
+            humanize=self._cloak_config.get("humanize", False),
+            geoip=self._cloak_config.get("geoip", False),
+            viewport={"width": 1920, "height": 1080},
+        )
+
+        # CloakBrowser 使用独立的 profile 目录
+        profile_dir = self.user_data_dir or "./cloak_profile"
+        profile_path = Path(profile_dir).resolve()
+        profile_path.mkdir(parents=True, exist_ok=True)
+        self._context = cloak_persistent(
+            user_data_dir=str(profile_path),
+            **cloak_kwargs,
+        )
+        self._browser = self._context.browser
+        pages = self._context.pages
+        page = pages[0] if pages else self._context.new_page()
+        self._pages = [page]
+        logger.info(
+            "CloakBrowser 已启动（持久化模式）headless=%s profile=%s",
+            self.headless, profile_path,
+        )
+
+        self._active_index = 0
+        self._register_popup_listener(page)
+        self._create_cdp_session(page)
+        self._register_dialog_handler(page)
+        logger.info("Browser (CloakBrowser) 启动完成，profile=%s", profile_path)
 
     def close(self) -> None:
         """关闭浏览器，清理所有资源。

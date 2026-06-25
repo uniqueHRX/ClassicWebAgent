@@ -90,3 +90,97 @@
 
 **场景**: 学术 | **难度**: ⭐⭐⭐
 **成功标准**: report 包含热门方向列表和代表性工作
+
+---
+
+## 评分工具：`scripts/evaluate.py`
+
+评估脚本对 Agent 的运行结果进行自动评分，基于 LLM 评估各维度质量。在运行 `scripts/run_test_cases.py` 之后使用。
+
+### 使用方法
+
+```bash
+# 评估指定日期和序号的单个运行
+python scripts/evaluate.py --date 2026-06-24 --id 0015
+
+# 评估指定日期的范围
+python scripts/evaluate.py --date 2026-06-25 --range 1-10
+
+# 跨日期扫描（不指定 --date 时搜索所有日期）
+python scripts/evaluate.py --id 0015     # 所有日期中的 0015
+python scripts/evaluate.py --range 1-10  # 所有日期中的 1-10 号
+
+# 评估所有运行结果
+python scripts/evaluate.py
+
+# 仅做结构和子任务分析，不调用 LLM 评分
+python scripts/evaluate.py --no-llm
+
+# 自定义输出文件
+python scripts/evaluate.py --date 2026-06-25 --range 1-10 --output results/eval.json
+```
+
+### 评分维度
+
+| 维度 | 权重 | 说明 |
+|------|------|------|
+| 任务完成度 | 50% | LLM 按 `eval_criteria`（test-cases.yaml 中定义）逐项评估报告覆盖了多少用户要求 |
+| 信息质量 | 30% | 包含三个子维度：数据准确性(40%) / 信息具体性(30%) / 来源可信度(30%) |
+| 子任务完成率 | 20% | `sub_tasks.json` 中 `status=completed` 的比例 |
+
+总分公式：
+```
+总分 = 主任务成功(0/1) × (完成度×50% + 信息质量×30% + 子任务完成率×20%)
+```
+
+### 依赖
+
+- 需要 `.env` 中配置 **LLM** API KEY（`LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL_NAME`）
+- 评估使用 LLM（文本模型），而非 VLM（视觉模型）
+- `--no-llm` 模式不需要 API KEY，但所有维度将返回 0 分
+
+### 输入数据
+
+评估脚本自动从 `log/YYYY-MM-DD-NNNN/` 目录中读取：
+
+| 文件 | 用途 |
+|------|------|
+| `run.log` | 解析任务描述（用户任务）和主任务状态（成功/失败） |
+| `report.md` | 作为 LLM 评分对象 |
+| `sub_tasks.json` | 子任务完成/失败计数 |
+
+### 输出
+
+结果保存为 JSON 文件（默认 `log/results.json`），包含每个测例的详细评分和汇总：
+
+```json
+{
+  "test_cases": [
+    {
+      "id": 1,
+      "task": "今天北京天气怎么样",
+      "score": 75.2,
+      "task_fulfillment": 82.0,
+      "info_quality": 70.0,
+      "detail": {
+        "task_fulfillment": 82,
+        "info_accuracy": 75,
+        "info_specificity": 65,
+        "info_source": 70,
+        "reason": "温度信息完整但缺少降水概率"
+      },
+      "sub_tasks": {
+        "total": 3,
+        "completed": 2,
+        "failed": 0
+      }
+    }
+  ],
+  "summary": {
+    "total": 10,
+    "avg_task_fulfillment": 75.3,
+    "avg_info_quality": 68.2,
+    "avg_score": 72.1
+  }
+}
+```
