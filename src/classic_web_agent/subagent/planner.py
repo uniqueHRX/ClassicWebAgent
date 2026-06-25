@@ -47,6 +47,7 @@ class Planner:
         vlm: LLMClient | None,
         memory: Memory | None = None,
         confidence_threshold: float = 0.9,
+        max_retries: int = 3,
     ) -> None:
         self.vlm = vlm
         self.memory = memory
@@ -59,7 +60,8 @@ class Planner:
         # confidence 机制
         self.confidence_threshold: float = confidence_threshold
         self._retry_count: int = 0
-        self._max_retries: int = 3
+        self._max_retries: int = max_retries
+        self._retry_hint: str = ""  # 低置信度重试时的提示信息
 
     # ═══════════════════════════════════════════════════════════════════
     # 公开方法
@@ -121,17 +123,40 @@ class Planner:
         if confidence < self.confidence_threshold:
             self._retry_count += 1
             if self._retry_count >= self._max_retries:
+                logger.warning(
+                    "连续%d次低置信度（阈值=%.2f），发送 FAIL",
+                    self._max_retries, self.confidence_threshold,
+                )
                 self._retry_count = 0
+                self._retry_hint = ""
                 return [
                     Action(
                         action_type="FAIL",
                         text=f"连续{self._max_retries}次低置信度",
                     )
                 ]
+
+            # 构建重试提示，让 VLM 了解上一轮决策的问题
+            action_summary = json.dumps(raw_actions, ensure_ascii=False)
+            self._retry_hint = (
+                f"【系统提示：第 {self._retry_count} 次重试】\n"
+                f"你上一轮输出的 confidence={confidence}，低于阈值 {self.confidence_threshold}，"
+                f"未被采纳。\n"
+                f"上一轮的目标：{goal}\n"
+                f"上一轮的动作：{action_summary}\n"
+                f"请仔细分析当前页面的截图和 DOM 树，确认你的判断是否准确。"
+                f"如果你不确定应该操作哪个元素，可以采取更保守的策略（如先 SCROLL "
+                f"查看更多内容、先用 EXTRACT 获取全文再判断）。\n"
+            )
+            logger.info(
+                "低置信度重试 %d/%d（conf=%.2f, goal=%s）",
+                self._retry_count, self._max_retries, confidence, goal,
+            )
             return self.plan(state, sub_task, last_result,
                              step_number, max_steps)
 
         self._retry_count = 0
+        self._retry_hint = ""
         return self._to_actions(raw_actions)
 
     # ═══════════════════════════════════════════════════════════════════
@@ -222,13 +247,23 @@ class Planner:
         )
 
     def _recent_text(self) -> str:
-        """从 memory.working 取最近 5 步。"""
+        """从 memory.working 取最近 20 步，序列化为结构化行。"""
         if not self.memory:
             return ""
-        recent = self.memory.get_working(limit=5)
-        return "\n".join(
-            f"  [{i}] {e.content}" for i, e in enumerate(recent)
-        )
+        recent = self.memory.get_working(limit=20)
+        lines = []
+        for i, e in enumerate(recent):
+            parts = [f"  [{i}]"]
+            if e.url:
+                parts.append(f"url={e.url}")
+            parts.append(f"action={e.action_type}")
+            if e.element_info:
+                parts.append(f"element={e.element_info}")
+            if e.result_message:
+                # result_message 可能已包含在 content 中，单独提取保证可读性
+                parts.append(f"result={e.result_message}")
+            lines.append(" ".join(parts))
+        return "\n".join(lines)
 
     # ═══════════════════════════════════════════════════════════════════
     # VLM 调用
@@ -257,7 +292,7 @@ class Planner:
             current_tab_id=state.current_tab_id or current_tab_id,
             tabs_list=state.tabs_list or tabs_list,
         )
-        return [
+        messages: list[dict[str, Any]] = [
             {"role": "system", "content": self._render_system()},
             {
                 "role": "user",
@@ -267,6 +302,9 @@ class Planner:
                 ],
             },
         ]
+        if self._retry_hint:
+            messages.append({"role": "system", "content": self._retry_hint})
+        return messages
 
     def _call_vlm(
         self, messages: list[dict[str, Any]]

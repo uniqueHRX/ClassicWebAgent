@@ -1,7 +1,7 @@
 """Agent 数据模型 —— agent 和 subagent 共享的核心数据结构。
 
 包含：PageState, Action, ActionResult, MemoryEntry, KnowledgeItem,
-      AgentStep, PlanStep, Plan, TaskResult。
+      TodoItem, NextAction, DirectorOutput, TaskResult。
 """
 
 from dataclasses import dataclass, field
@@ -50,10 +50,26 @@ class ActionResult:
 
 @dataclass
 class MemoryEntry:
-    """记忆条目。"""
+    """记忆条目 —— 记录操作历史。
 
-    role: str = ""          # "user" / "assistant" / "system" / "observation"
+    Fields:
+        role: 角色（"user" / "assistant" / "system" / "observation"）。
+        content: 原始消息内容（向后兼容，含动作+结果+data 摘要）。
+        url: 执行此动作时的页面 URL。
+        action_type: 动作类型（CLICK / TYPE / GOTO / WAIT 等）。
+        element_id: 目标元素的 CDP backendNodeId。
+        element_info: 目标元素的 DOM 节点描述（tag + id + class + text 等）。
+        result_message: 动作执行结果信息（ActionResult.message）。
+        metadata: 扩展元数据。
+    """
+
+    role: str = ""
     content: str = ""
+    url: str = ""
+    action_type: str = ""
+    element_id: int | None = None
+    element_info: str = ""
+    result_message: str = ""
     metadata: dict[str, Any] | None = None
 
 
@@ -66,45 +82,6 @@ class KnowledgeItem:
     value: str = ""
     source_url: str = ""
     sub_task_id: int = 0
-
-
-@dataclass
-class AgentStep:
-    """单步 ReAct 轨迹记录。"""
-
-    step_index: int = 0
-    action: Action | None = None
-    result: ActionResult | None = None
-    state_before: PageState | None = None
-    state_after: PageState | None = None
-
-
-@dataclass
-class PlanStep:
-    """粗粒度计划步骤。"""
-
-    id: int = 0
-    goal: str = ""
-    fallback: str = ""
-    status: str = "pending"  # pending | active | completed | failed
-
-
-@dataclass
-class Plan:
-    """粗粒度计划 —— PlanStep 的容器。"""
-
-    steps: list[PlanStep] = field(default_factory=list)
-
-    @property
-    def current_step(self) -> PlanStep | None:
-        for step in self.steps:
-            if step.status == "pending":
-                return step
-        return None
-
-    @property
-    def remaining_steps(self) -> list[PlanStep]:
-        return [s for s in self.steps if s.status not in ("completed", "failed")]
 
 
 @dataclass

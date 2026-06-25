@@ -100,7 +100,9 @@ class Browser:
     """
 
     def __init__(self, headless: bool = True,
-                 user_data_dir: str | None = None) -> None:
+                 user_data_dir: str | None = None,
+                 browser_engine: str = "playwright",
+                 cloak_config: dict | None = None) -> None:
         """初始化浏览器管理器（此时未启动 Playwright）。
 
         Args:
@@ -108,9 +110,13 @@ class Browser:
                        False 为有头（开发调试时可观察浏览器操作）。
             user_data_dir: Chrome 用户数据目录路径（持久化 cookies/localStorage）。
                           为 None 时不使用持久化配置。
+            browser_engine: 浏览器引擎。"playwright"（默认）| "cloakbrowser"。
+            cloak_config: CloakBrowser 配置（humanize, geoip 等）。
         """
         self.headless = headless
         self.user_data_dir = user_data_dir
+        self._browser_engine = browser_engine
+        self._cloak_config = cloak_config or {}
 
         self._pw: PW_Playwright | None = None
         self._browser: PW_Browser | None = None
@@ -121,50 +127,73 @@ class Browser:
 
     # ── 生命周期 ────────────────────────────────────────────────────────
 
-    def _apply_stealth(self, page: PW_Page) -> None:
-        """对页面应用 playwright-stealth 反检测补丁。"""
+    def _apply_stealth(self) -> None:
+        """对浏览器 context 应用 playwright-stealth 反检测补丁。
+
+        使用 hook_playwright_context 钩住 context，确保 NEW_PAGE 时自动应用补丁，
+        而不是在页面创建之后手动 patch。这样：
+        1. stealth 在页面脚本执行前注入
+        2. 所有页面（包括 popup 等自动创建的）都自动获得保护
+        3. 部分依赖 CLI 参数级别的 evasion 才能生效
+        """
+        if self._context is None:
+            return
         try:
             from playwright_stealth import Stealth
-            Stealth().apply_stealth_sync(page)
-            logger.debug("Stealth 补丁已应用到页面")
+            Stealth().hook_playwright_context(self._context)
+            logger.debug("Stealth 钩子已挂载到 BrowserContext")
         except Exception:
-            logger.debug("Stealth 补丁应用失败")
+            logger.debug("Stealth 挂载失败（忽略）")
 
     def launch(self) -> None:
-        """启动 Chromium 浏览器并创建默认页面（和 CDP session）。
+        """启动浏览器，根据 _browser_engine 选择引擎。
 
-        具体流程：
-            1. 启动 Playwright 驱动进程
-            2. launch Chromium（headless/s headless 取决于构造参数）
-            3. 创建默认 BrowserContext（如果配置了 user_data_dir 则用持久化模式）
-            4. 创建默认 Page 并注册 popup 事件监听 + 对话框监听
-            5. 为 Page 创建 CDP session
-
-        注意：launch 后立即可以调用 goto/click/screenshot 等方法。
-        重复调用 launch 会被安全忽略（日志中产生一个 warning）。
+        - "playwright"：标准 Playwright Chromium + playwright-stealth
+        - "cloakbrowser"：CloakBrowser C++ 源码级反检测 Chromium（跳过 JS 注入类 stealth）
         """
         if self._browser is not None:
             logger.warning("浏览器已在运行，忽略重复 launch")
             return
 
+        if self._browser_engine == "cloakbrowser":
+            self._launch_cloakbrowser()
+        else:
+            self._launch_playwright()
+
+    def _launch_playwright(self) -> None:
+        """标准 Playwright Chromium 启动路径（含 playwright-stealth 反检测）。"""
         self._pw = sync_playwright().start()
 
+        # 统一 context 配置（模拟中国用户环境）
+        _context_config = dict(
+            locale="zh-CN",
+            timezone_id="Asia/Shanghai",
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1920, "height": 1080},
+        )
+
+        _browser_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-web-security",
+            "--disable-infobars",
+            "--disable-features=IsolateOrigins,site-per-process",
+        ]
+        if not self.headless:
+            _browser_args.append("--start-maximized")
+
         if self.user_data_dir:
-            # 持久化模式：launch_persistent_context 自动管理 profile
             profile_path = Path(self.user_data_dir).resolve()
             profile_path.mkdir(parents=True, exist_ok=True)
             self._context = self._pw.chromium.launch_persistent_context(
                 user_data_dir=str(profile_path),
                 headless=self.headless,
-                args=[
-                    "--start-maximized",
-                    "--disable-blink-features=AutomationControlled"
-                ] if not self.headless
-                else [
-                    "--disable-blink-features=AutomationControlled"
-                ],
+                args=_browser_args,
+                **_context_config,
             )
-            # persistent_context 自带 browser 和 pages
             self._browser = self._context.browser
             pages = self._context.pages
             page = pages[0] if pages else self._context.new_page()
@@ -174,20 +203,59 @@ class Browser:
                 self.headless, profile_path,
             )
         else:
-            self._browser = self._pw.chromium.launch(headless=self.headless)
-            self._context = self._browser.new_context()
+            self._browser = self._pw.chromium.launch(
+                headless=self.headless, args=_browser_args,
+            )
+            self._context = self._browser.new_context(**_context_config)
             page = self._context.new_page()
             self._pages = [page]
             logger.info(
-                "浏览器已启动 headless=%s",
-                self.headless,
+                "浏览器已启动 headless=%s", self.headless,
             )
 
         self._active_index = 0
         self._register_popup_listener(page)
         self._create_cdp_session(page)
+        self._apply_stealth()
+
+    def _launch_cloakbrowser(self) -> None:
+        """CloakBrowser 启动路径。
+
+        CloakBrowser 的 launch() 返回标准 Playwright Browser 对象，
+        因此所有后续 CDP 操作（DOM.resolveNode、DOMSnapshot.captureSnapshot 等）完全兼容。
+        """
+        from cloakbrowser import launch as cloak_launch
+        from cloakbrowser import launch_persistent_context as cloak_persistent
+
+        cloak_kwargs = dict(
+            headless=self.headless,
+            humanize=self._cloak_config.get("humanize", False),
+            geoip=self._cloak_config.get("geoip", False),
+            viewport={"width": 1920, "height": 1080},
+        )
+
+        # CloakBrowser 使用独立的 profile 目录
+        profile_dir = self.user_data_dir or "./cloak_profile"
+        profile_path = Path(profile_dir).resolve()
+        profile_path.mkdir(parents=True, exist_ok=True)
+        self._context = cloak_persistent(
+            user_data_dir=str(profile_path),
+            **cloak_kwargs,
+        )
+        self._browser = self._context.browser
+        pages = self._context.pages
+        page = pages[0] if pages else self._context.new_page()
+        self._pages = [page]
+        logger.info(
+            "CloakBrowser 已启动（持久化模式）headless=%s profile=%s",
+            self.headless, profile_path,
+        )
+
+        self._active_index = 0
+        self._register_popup_listener(page)
+        self._create_cdp_session(page)
         self._register_dialog_handler(page)
-        self._apply_stealth(page)
+        logger.info("Browser (CloakBrowser) 启动完成，profile=%s", profile_path)
 
     def close(self) -> None:
         """关闭浏览器，清理所有资源。
@@ -294,7 +362,6 @@ class Browser:
             try:
                 self._create_cdp_session(popup)
                 self._register_dialog_handler(popup)
-                self._apply_stealth(popup)
             except Exception:
                 logger.warning("为新标签页创建 CDP session 失败", exc_info=True)
         self._active_index = len(self._pages) - 1
@@ -370,6 +437,62 @@ class Browser:
         return cdp
 
     # ── 元素定位（CDP resolveNode）────────────────────────────────────
+
+    def get_element_info(self, backend_node_id: int) -> str:
+        """通过 CDP 直接获取元素的 DOM 节点描述信息（tag + id + class + 关键属性 + 文本）。
+
+        与 resolve_node 不同，此方法使用 CDP `Runtime.callFunctionOn` 直接在
+        浏览器侧提取信息，无需生成 CSS 选择器或创建 Playwright Locator，开销更小。
+
+        Args:
+            backend_node_id: CDP backendNodeId。
+
+        Returns:
+            格式化的 DOM 描述字符串，如：
+            `<button#search-btn.btn-primary type=submit>"搜索"`。
+            解析失败时返回空字符串。
+        """
+        try:
+            cdp = self.get_cdp_session()
+            resolved = cdp.send("DOM.resolveNode", {"backendNodeId": backend_node_id})
+            object_id = resolved["object"]["objectId"]
+
+            result = cdp.send("Runtime.callFunctionOn", {
+                "objectId": object_id,
+                "functionDeclaration": """function() {
+                    var t = this.tagName.toLowerCase();
+                    var a = [];
+                    if (this.id) a.push('#' + this.id);
+                    if (this.className && typeof this.className === 'string') {
+                        var cls = this.className.trim().split(/\\s+/).filter(function(c){return c.length>0;}).join('.');
+                        if (cls) a.push('.' + cls);
+                    }
+                    var extra = '';
+                    var href = this.getAttribute('href') || '';
+                    var src = this.getAttribute('src') || '';
+                    var val = this.getAttribute('value') || '';
+                    var ph = this.getAttribute('placeholder') || '';
+                    var tp = this.getAttribute('type') || '';
+                    var role = this.getAttribute('role') || '';
+                    if (tp) extra += ' type=' + tp;
+                    if (role) extra += ' role=' + role;
+                    if (ph) extra += ' placeholder=' + JSON.stringify(ph);
+                    if (href && href[0] !== '#') extra += ' href=' + href.slice(0,80);
+                    if (src) extra += ' src=...' + src.slice(-40);
+                    if (val && val.length < 30) extra += ' value=' + JSON.stringify(val);
+                    var txt = (this.textContent || '').trim().slice(0, 100);
+                    var info = '<' + t;
+                    if (a.length) info += ' ' + a.join(' ');
+                    info += extra;
+                    info += '>';
+                    if (txt) info += JSON.stringify(txt);
+                    return info;
+                }""",
+                "returnByValue": True,
+            })
+            return result["result"]["value"]
+        except Exception:
+            return ""
 
     def resolve_node(self, backend_node_id: int, page: PW_Page | None = None) -> ElementHandle:
         """通过 backendNodeId 获取 Playwright ElementHandle。
@@ -551,6 +674,10 @@ class Browser:
         """浏览器前进（GO_FORWARD 动作）。"""
         self.current_page.go_forward()
 
+    def reload(self) -> None:
+        """刷新当前页面（REFRESH 动作）。"""
+        self.current_page.reload()
+
     # ── 标签页管理 ──────────────────────────────────────────────────────
 
     def new_tab(self, url: str | None = None) -> int:
@@ -641,6 +768,64 @@ class Browser:
         img.save(buf, format="PNG", optimize=True)
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         return f"data:image/png;base64,{b64}"
+
+    def find_elements_by_text(self, text: str, exact: bool = False) -> list[dict]:
+        """查找视口内所有包含指定文本的可见元素，返回 DOM 信息 + 坐标。
+
+        使用 page.evaluate() 直接在浏览器侧遍历 DOM，不依赖 CDP snapshot，
+        因此能捕获到没有被 SoM 标记的元素（如动态菜单项、Shadow DOM 内容）。
+
+        Args:
+            text: 要搜索的文本。
+            exact: True 时精确匹配，False 时子串匹配。
+
+        Returns:
+            list[dict]，每项包含：
+                tag: 标签名（小写）
+                id: 元素 id
+                classes: 类名列表
+                text: 文本内容（前 200 字符）
+                x, y, w, h: 视口坐标（CSS 像素）
+        """
+        import json
+        search_text = json.dumps(text, ensure_ascii=False)
+        return self.current_page.evaluate(f"""() => {{
+            const results = [];
+            const walker = document.createTreeWalker(
+                document.body, NodeFilter.SHOW_ELEMENT, null, false
+            );
+            while (walker.nextNode()) {{
+                const el = walker.currentNode;
+                // 跳过隐藏元素
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 || rect.height === 0) continue;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') continue;
+
+                const textContent = (el.textContent || '').trim();
+                if (!textContent) continue;
+
+                // 文本匹配
+                const matches = {('textContent === ' + search_text) if exact else ('textContent.includes(' + search_text + ')')};
+                if (!matches) continue;
+
+                var cls = [];
+                if (el.className && typeof el.className === 'string') {{
+                    cls = el.className.trim().split(/\\\s+/).filter(function(c){{return c.length>0;}});
+                }}
+                results.push({{
+                    tag: el.tagName.toLowerCase(),
+                    id: el.id || '',
+                    classes: cls,
+                    text: textContent.slice(0, 200),
+                    x: Math.round(rect.x),
+                    y: Math.round(rect.y),
+                    w: Math.round(rect.width),
+                    h: Math.round(rect.height),
+                }});
+            }}
+            return results;
+        }}""")
 
     def extract_text(self, backend_node_id: int | None = None) -> str:
         """提取文本内容（EXTRACT 动作）。

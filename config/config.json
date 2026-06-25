@@ -3,19 +3,34 @@
     "model": "deepseek-v4-flash",
     "base_url": "",
     "api_key": "",
-    "temperature": 0.1
+    "temperature": 0.3,
+    "timeout": 180
   },
   "subagent": {
     "model": "mimo-v2.5",
     "base_url": "",
     "api_key": "",
     "temperature": 0.1,
-    "confidence_threshold": 0.9
+    "confidence_threshold": 0.8,
+    "timeout": 90,
+    "max_steps": 20,
+    "max_retries": 3
   },
 
-  "headless": true,
+  "browser_engine": "cloakbrowser",
+  "playwright": {
+    "headless": false,
+    "user_data_dir": "./chrome_profile"
+  },
+
+  "cloakbrowser": {
+    "headless": true,
+    "user_data_dir": "./cloak_profile",
+    "humanize": true,
+    "geoip": false
+  },
+
   "log_trace": true,
   "log_level": "INFO",
-  "report_format": "both",
-  "user_data_dir": "./chrome_profile"
+  "report_format": "both"
 }

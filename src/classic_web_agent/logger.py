@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from classic_web_agent.common.types import AgentStep, TaskResult
+from classic_web_agent.common.types import TaskResult
 
 
 class Logger:
@@ -24,7 +24,6 @@ class Logger:
             run_dir: 当前运行目录（log/YYYY-MM-DD-NNNN/），
                      为 None 时仅控制台输出。
         """
-        self.steps: list[AgentStep] = []
         self.run_dir: Path | None = run_dir
         self._trace_dir: Path | None = None
 
@@ -35,13 +34,6 @@ class Logger:
     def start_task(self, task: str) -> None:
         """记录任务开始。"""
         print(f"[Agent] 任务开始: {task}")
-
-    def log_step(self, step: AgentStep) -> None:
-        """记录单步轨迹。"""
-        self.steps.append(step)
-        action_name = step.action.action_type if step.action else "NONE"
-        result_msg = step.result.message if step.result else ""
-        print(f"[Agent]  步骤 {step.step_index}: {action_name} → {result_msg}")
 
     def end_task(self, result: TaskResult) -> None:
         """记录任务结束。"""
@@ -81,8 +73,7 @@ class Logger:
                 f"# Agent 运行报告\n\n"
                 f"- **任务**: {task}\n"
                 f"- **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"- **状态**: {'✅ 成功' if report.strip() else '❌ 失败'}\n"
-                f"- **步骤数**: {len(self.steps)}\n\n"
+                f"- **状态**: {'✅ 成功' if report.strip() else '❌ 失败'}\n\n"
                 f"---\n\n"
                 f"{report}"
             )

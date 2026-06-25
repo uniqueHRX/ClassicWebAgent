@@ -2,24 +2,18 @@
 
 from classic_web_agent.agent.core import Agent
 from classic_web_agent.common.types import (
-    PageState,
     Action,
     ActionResult,
     MemoryEntry,
-    AgentStep,
-    PlanStep,
-    Plan,
+    PageState,
     TaskResult,
 )
 
 __all__ = [
     "Agent",
-    "PageState",
     "Action",
     "ActionResult",
     "MemoryEntry",
-    "AgentStep",
-    "PlanStep",
-    "Plan",
+    "PageState",
     "TaskResult",
 ]

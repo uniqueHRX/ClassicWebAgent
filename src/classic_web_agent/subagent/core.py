@@ -19,8 +19,6 @@ from classic_web_agent.logger import fmt_action
 
 logger = logging.getLogger(__name__)
 
-_MAX_SUB_STEPS = 50
-
 
 class SubAgent:
     """VLM 子代理 —— 自治执行单个子任务。
@@ -86,7 +84,10 @@ class SubAgent:
         planner = self._get_planner()
         executor = self._get_executor()
 
-        for step in range(1, _MAX_SUB_STEPS + 1):
+        # 从配置读取最大步数和重试次数，未设置时使用默认值
+        max_steps = self.subagent_config.get("max_steps", 20)
+
+        for step in range(1, max_steps + 1):
             # 1. 观察
             state = perception.observe()
             if not state.url:
@@ -108,7 +109,7 @@ class SubAgent:
                 sub_task=sub_task,
                 last_result=self._last_result_text(),
                 step_number=step,
-                max_steps=_MAX_SUB_STEPS,
+                max_steps=max_steps,
             )
 
             if not actions:
@@ -125,6 +126,7 @@ class SubAgent:
 
             # 3. 执行动作序列（收集全部结果，供 VLM 下一轮决策参考）
             step_results: list[str] = []
+            log_lines: list[str] = []
             for action in actions:
                 if action.action_type in ("DONE", "FAIL"):
                     summary = action.text or ""
@@ -142,14 +144,34 @@ class SubAgent:
                 tabs_before = self.browser.tab_count
 
                 result = executor.execute(action)
-                # 包含 data 字段（EXTRACT 的提取文本、SCREENSHOT 的 data URI 等）
+                # 完整消息（含 data）→ _last_step_results → VLM {last_result}
                 if result.data is not None and isinstance(result.data, str) and len(result.data) > 0:
                     msg = f"[{action.action_type}] {result.message} | data={result.data}"
                 else:
                     msg = f"[{action.action_type}] {result.message}"
                 step_results.append(msg)
+
+                # 精简日志（仅 type + message，不含 data）
+                log_msg = f"[{action.action_type}] {result.message}"
+                log_lines.append(log_msg)
+
+                # 获取目标元素的 DOM 节点信息（从 handle 提取，用于结构化记忆）
+                element_info = ""
+                if action.element_id is not None:
+                    try:
+                        element_info = self.browser.get_element_info(action.element_id)
+                    except Exception:
+                        pass
+
                 self.memory.add_working(
-                    MemoryEntry(role="assistant", content=msg)
+                    MemoryEntry(
+                        role="assistant",
+                        url=state.url,
+                        action_type=action.action_type,
+                        element_id=action.element_id,
+                        element_info=element_info,
+                        result_message=result.message,
+                    )
                 )
 
                 if not result.success:
@@ -171,7 +193,7 @@ class SubAgent:
             # 保存本次序列的完整结果供 VLM 下一轮使用
             self._last_step_results = "\n".join(step_results)
             logger.info(
-                "[SubAgent] 步骤 %d 执行结果: %s", step, self._last_step_results
+                "[SubAgent] 步骤 %d 执行结果: %s", step, " | ".join(log_lines)
             )
 
         return self.memory.get_observations()
@@ -188,10 +210,12 @@ class SubAgent:
         if self._planner is None:
             from classic_web_agent.subagent.planner import Planner
             confidence = self.subagent_config.get("confidence_threshold", 0.9)
+            max_retries = self.subagent_config.get("max_retries", 3)
             self._planner = Planner(
                 vlm=self.vlm,
                 memory=self.memory,
                 confidence_threshold=confidence,
+                max_retries=max_retries,
             )
         return self._planner
 

@@ -31,12 +31,14 @@
 | **导航** | `GOTO` | `url: str` | `page.goto(url)` |
 | | `GO_BACK` | — | `page.go_back()` |
 | | `GO_FORWARD` | — | `page.go_forward()` |
+| | `REFRESH` | — | `page.reload()` |
 | **标签页** | `NEW_TAB` | `url: str \| None` | `context.new_page()` |
 | | `CLOSE_TAB` | — | `page.close()` |
 | | `SWITCH_TAB` | `tab_index: int` | `context.pages[i].bring_to_front()` |
 | **信息获取** | `SCREENSHOT` | — | `page.screenshot()` |
 | | `EXTRACT` | `element_id: int \| None` | `page.inner_text()` / `page.text_content()` |
-| | `FIND` | `text: str` | `page.get_by_text(text)` → `scroll_into_view()` |
+| | `FIND` | `text: str, exact: bool` | `page.get_by_text(text)` → `scroll_into_view()` |
+| | `GET_ELEMENT` | `text: str, exact: bool` | `page.evaluate()` 遍历 DOM 查找文本+坐标 |
 
 **内部动作（5 个）：**
 
@@ -90,9 +92,9 @@ SoM 标注的盲区 fallback。当目标在 Canvas、WebGL、iframe 内或动态
 
 ### 3.3 导航
 
-**`GOTO`** — URL 导航。**`GO_BACK`** — 浏览器后退。**`GO_FORWARD`** — 浏览器前进。
+**`GOTO`** — URL 导航。**`GO_BACK`** — 浏览器后退。**`GO_FORWARD`** — 浏览器前进。**`REFRESH`** — 刷新当前页面。
 
-`GO_BACK` 保持独立语义而非合入 `GOTO`——减少 VLM 对 `GOTO("back")` 字符串的歧义理解。`GO_FORWARD` 与 `GO_BACK` 对称，Playwright 有原生 `page.go_forward()`。
+`GO_BACK` 保持独立语义而非合入 `GOTO`——减少 VLM 对 `GOTO("back")` 字符串的歧义理解。`GO_FORWARD` 与 `GO_BACK` 对称，Playwright 有原生 `page.go_forward()`。`REFRESH` 用于清除页面弹窗/加载异常等场景，刷新后应配合 WAIT。
 
 ### 3.4 标签页管理
 
@@ -120,6 +122,12 @@ SoM 标注的盲区 fallback。当目标在 Canvas、WebGL、iframe 内或动态
 
 > 设计依据：弥补 VLM 感知架构与 BrowserAgent 的 Accessible Tree 之间的能力差距——浏览器文本搜索是确定性匹配，不依赖模型。
 
+**`GET_ELEMENT`** — 查找未标记元素
+
+与 `FIND` 参数相同（`text` + 可选 `exact`），但返回所有匹配元素的 DOM 信息与视口坐标，而非滚动到目标位置。用于 SoM 未标记的元素（如下拉菜单项、动态内容），输出格式与 DOM 树条目一致但不带编号：`<tag#id.class>"文本" @(x,y,w,h)`。拿到坐标后用 `MOUSE_CLICK` 点击。
+
+> 设计依据：SoM 标注依赖 CDP snapshot 的 backendNodeId，动态生成/Shadow DOM 穿透节点无编号，VLM 看得到但无法用 CLICK 操作。GET_ELEMENT 绕过此限制，直接用浏览器 JS 遍历 DOM。
+
 ### 3.6 内部动作
 
 **`THINK`** — ReAct Thought。显式记录推理步骤到工作记忆，提升可解释性。
@@ -140,7 +148,7 @@ SoM 标注的盲区 fallback。当目标在 Canvas、WebGL、iframe 内或动态
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `action_type` | `ActionType` | 动作类型枚举（16 外部 + 5 内部 = 21 项） |
+| `action_type` | `ActionType` | 动作类型枚举（18 外部 + 5 内部 = 23 项） |
 | `element_id` | `int \| None` | SoM 元素引用（外部动作） |
 | `text` | `str \| None` | 文本参数（TYPE / THINK / DONE / FAIL / FIND） |
 | `extra` | `dict[str, Any] \| None` | 扩展参数，承载类型相关数据 |
@@ -159,6 +167,7 @@ SoM 标注的盲区 fallback。当目标在 Canvas、WebGL、iframe 内或动态
 | `SWITCH_TAB` | `{"tab_index": int}` |
 | `EXTRACT` | `{"element_id": int \| None}` |
 | `FIND` | `{"text": str, "exact": bool}` |
+| `GET_ELEMENT` | `{"text": str, "exact": bool}` |
 
 ---
 
@@ -176,7 +185,7 @@ SoM 标注的盲区 fallback。当目标在 Canvas、WebGL、iframe 内或动态
 
 | 参考 | 动作数 | 本方案对齐 |
 |------|--------|-----------|
-| **BrowserAgent** | 18（含 NONE） | 替换 NONE/CHECK/SELECT_OPTION/PAGE_FOCUS → SCREENSHOT/WAIT/EXTRACT/FIND。总数 21 vs 18，去掉了 LLM 无法有效利用的动作，补充了 VLM 感知架构所需和显式记忆操作 |
+| **BrowserAgent** | 18（含 NONE） | 替换 NONE/CHECK/SELECT_OPTION/PAGE_FOCUS → SCREENSHOT/WAIT/EXTRACT/FIND/GET_ELEMENT/REFRESH。总数 23 vs 18，去掉了 LLM 无法有效利用的动作，补充了 VLM 感知架构所需和显式记忆操作 |
 | **WebVoyager** | ~10 | 覆盖其全部动作（Click / Type / Scroll / Goto / GoBack / Wait / Screenshot 等），并扩展标签页管理和文本获取 |
 | **browser-harness** | ~12 | 共享轻量原子动作哲学；新增 FIND 和 EXTRACT 弥补纯 VLM 感知的定位短板 |
 

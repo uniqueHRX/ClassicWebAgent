@@ -25,6 +25,7 @@ class ActionType(Enum):
     GOTO = auto()
     GO_BACK = auto()
     GO_FORWARD = auto()
+    REFRESH = auto()
     # 标签页
     NEW_TAB = auto()
     CLOSE_TAB = auto()
@@ -33,6 +34,7 @@ class ActionType(Enum):
     SCREENSHOT = auto()
     EXTRACT = auto()
     FIND = auto()
+    GET_ELEMENT = auto()
     # 内部
     THINK = auto()
     REMEMBER = auto()

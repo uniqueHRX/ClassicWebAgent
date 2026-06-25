@@ -224,20 +224,56 @@ def evaluate_run(run_dir: Path, llm: LLMClient | None, idx: int) -> dict[str, An
 # ── CLI ─────────────────────────────────────────────────────────────────
 
 
-def resolve_dirs(range_str: str | None, single_id: str | None) -> list[Path]:
+def resolve_dirs(range_str: str | None, single_id: str | None,
+                 date_str: str | None) -> list[Path]:
+    """解析运行目录列表。
+
+    Args:
+        range_str: 序号范围，如 "18-27"。
+        single_id: 单个序号，如 "0020"。
+        date_str: 日期前缀，如 "2026-06-25"；None 时扫描 log/ 下全部目录。
+
+    Returns:
+        匹配的运行目录列表（按名称排序）。
+    """
     dirs: list[Path] = []
-    if single_id:
-        d = LOG_BASE / f"2026-06-24-{single_id}"
+
+    if single_id and date_str:
+        d = LOG_BASE / f"{date_str}-{single_id}"
         if d.exists():
             dirs.append(d)
         return dirs
-    if range_str:
-        a, b = range_str.split("-")
-        for i in range(int(a), int(b) + 1):
-            d = LOG_BASE / f"2026-06-24-{i:04d}"
-            if d.exists() and (d / "run.log").exists():
+    if single_id:
+        # 无日期时扫描所有日期中的匹配序号
+        for d in sorted(LOG_BASE.iterdir()):
+            if d.is_dir() and d.name.endswith(f"-{single_id}") and (d / "run.log").exists():
                 dirs.append(d)
         return dirs
+
+    if range_str:
+        a, b = range_str.split("-")
+        if date_str:
+            for i in range(int(a), int(b) + 1):
+                d = LOG_BASE / f"{date_str}-{i:04d}"
+                if d.exists() and (d / "run.log").exists():
+                    dirs.append(d)
+        else:
+            # 无日期时扫描所有日期
+            for d in sorted(LOG_BASE.iterdir()):
+                if not d.is_dir():
+                    continue
+                parts = d.name.rsplit("-", 1)
+                if len(parts) != 2:
+                    continue
+                try:
+                    seq = int(parts[1])
+                    if a <= seq <= b and (d / "run.log").exists():
+                        dirs.append(d)
+                except ValueError:
+                    continue
+        return dirs
+
+    # 无参数 → 全量扫描
     for d in sorted(LOG_BASE.iterdir()):
         if d.is_dir() and (d / "run.log").exists():
             dirs.append(d)
@@ -246,8 +282,9 @@ def resolve_dirs(range_str: str | None, single_id: str | None) -> list[Path]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--range", help="如 18-27")
-    parser.add_argument("--id", help="如 0020")
+    parser.add_argument("--range", help="序号范围，如 18-27")
+    parser.add_argument("--id", help="序号，如 0020")
+    parser.add_argument("--date", help="日期前缀，如 2026-06-25（默认全量扫描）")
     parser.add_argument("--no-llm", action="store_true")
     parser.add_argument("--output", default="log/results.json")
     args = parser.parse_args()
@@ -259,7 +296,7 @@ def main() -> None:
         except Exception as e:
             logger.warning(f"LLM 初始化失败: {e}")
 
-    dirs = resolve_dirs(args.range, args.id)
+    dirs = resolve_dirs(args.range, args.id, args.date)
     if not dirs:
         logger.error("未找到运行日志"); sys.exit(1)
 

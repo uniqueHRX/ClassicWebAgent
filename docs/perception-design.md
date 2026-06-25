@@ -45,11 +45,11 @@ cdp_session = await page.context.new_cdp_session(page)
 # ... 采集与解析，Playwright 自动清理
 ```
 
-## 二、感知流程（5 步）
+## 二、感知流程（6 步）
 
 ```
 步骤1: 截图
-       └── page.screenshot(type="jpeg", quality=75) → base64 data URI
+       └── page.screenshot(type="png", scale="css") → PIL optimize PNG → base64 data URI
 
 步骤2: CDP 三流并行获取
        ├── DOM.getDocument({depth: -1})
@@ -62,11 +62,16 @@ cdp_session = await page.context.new_cdp_session(page)
        ├── 每个节点挂 Snapshot 数据 (bounds/styles/is_clickable)
        └── 可见性判定（见下方规则）
 
-步骤4: 遍历 + 序列化
+步骤4: 收集 SoM 可交互元素
+       └── 递归收集可交互元素，提取其视口坐标（调整滚动偏移），
+           为后续 Set-of-Mark 标注准备
+
+步骤5: 遍历 + 序列化
        └── 递归遍历 DOM 树，一步完成筛选与文本输出
 
-步骤5: 组装 PageState
-       └── screenshot + url + title + tree_text
+步骤6: SoM 标注 + 组装 PageState
+       ├── 在截图上绘制 Set-of-Mark 编号标签（包围框 + 编号徽章）
+       └── screenshot(已标注) + url + title + tree_text → PageState
 ```
 
 ### 可见性判定

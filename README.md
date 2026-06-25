@@ -43,6 +43,31 @@ poetry install
 poetry run playwright install chromium
 ```
 
+### 4. 可选：安装 CloakBrowser 反检测浏览器
+
+如果目标网站有严格的反爬/反机器人检测（如 Cloudflare Turnstile、reCAPTCHA v3），可以安装 CloakBrowser——一个 C++ 源码级反检测 Chromium 二进制，58 个源码补丁覆盖 WebGL/Canvas/Audio/WebRTC 等指纹：
+
+```bash
+poetry install --with cloak
+```
+
+首次运行时会自动下载 CloakBrowser 二进制（~200MB，有进度显示）。安装后在 [`config.json`](config/config.json) 中开启：
+
+```json
+{
+  "browser_engine": "cloakbrowser",
+  "cloakbrowser": {
+    "humanize": false,
+    "geoip": false
+  }
+}
+```
+
+| cloakbrowser 配置 | 说明 |
+|-------------------|------|
+| `humanize: true` | 模拟人类操作：贝塞尔曲线鼠标移动、逐字符输入、真实滚动模式 |
+| `geoip: true` | 自动从代理 IP 匹配时区和语言（需安装 `pip install cloakbrowser[geoip]`） |
+
 ---
 
 ## 配置
@@ -77,15 +102,30 @@ VLM_MODEL_NAME = "mimo-v2.5"
 {
   "log_trace": true,
   "log_level": "INFO",
-  "headless": false,
+  "report_format": "both",
+  "browser_engine": "playwright",
+  "playwright": {
+    "headless": false,
+    "user_data_dir": "./chrome_profile"
+  },
+  "cloakbrowser": {
+    "headless": false,
+    "user_data_dir": "./cloak_profile",
+    "humanize": false,
+    "geoip": false
+  },
   "agent": {
     "model": "deepseek-v4-flash",
-    "temperature": 0.1
+    "temperature": 0.1,
+    "timeout": 180
   },
   "subagent": {
     "model": "mimo-v2.5",
     "temperature": 0.1,
-    "confidence_threshold": 0.9
+    "confidence_threshold": 0.9,
+    "timeout": 60,
+    "max_steps": 20,
+    "max_retries": 3
   }
 }
 ```
@@ -94,10 +134,15 @@ VLM_MODEL_NAME = "mimo-v2.5"
 |--------|------|
 | `log_trace` | 是否保存每次观察的截图和 DOM 树到 `trace/` |
 | `log_level` | 日志级别（DEBUG / INFO / WARNING / ERROR） |
-| `headless` | 浏览器是否无头模式 |
+| `report_format` | 报告格式：`"md"` / `"html"` / `"both"` |
+| `browser_engine` | 浏览器引擎：`"playwright"`（默认） / `"cloakbrowser"` |
+| `playwright.*` | Playwright 引擎配置（headless / user_data_dir） |
+| `cloakbrowser.*` | CloakBrowser 引擎配置（headless / user_data_dir / humanize / geoip） |
 | `agent.*` | LLM 模型参数 |
 | `subagent.*` | VLM 模型参数 |
 | `subagent.confidence_threshold` | VLM 动作置信度阈值（低于此值重试） |
+| `subagent.max_steps` | 子任务最大操作步数 |
+| `subagent.max_retries` | VLM 低置信度最大重试次数 |
 
 **配置优先级**：`config.json` 中的值会覆盖代码默认值，环境变量（`LLM_*` / `VLM_*`）会覆盖 `config.json`。
 
