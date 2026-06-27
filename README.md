@@ -4,6 +4,10 @@
 
 ---
 
+[![演示视频](https://img.youtube.com/vi/7OmGcWjdJMk/maxresdefault.jpg)](https://youtu.be/7OmGcWjdJMk?si=DN94NTMmYghvoqle)
+
+---
+
 ## 目录
 
 - [安装部署](#安装部署)
